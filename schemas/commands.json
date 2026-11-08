@@ -1,0 +1,942 @@
+{
+  "commands": [
+    {
+      "command": "app.list",
+      "description": "List integrated AppImages with the version read from each file, the menu entry's version, whether the menu entry is outdated, update source, and running state (pids; old_version means a replaced file is still running).",
+      "dry_run_by_default": false,
+      "example": {
+        "search": ""
+      },
+      "mutates": false,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "outdated_menu": {
+            "default": false,
+            "description": "Only apps whose menu entry no longer matches the file.",
+            "type": "boolean"
+          },
+          "search": {
+            "default": "",
+            "description": "Case-insensitive filter on name, id and path.",
+            "type": "string"
+          }
+        },
+        "title": "AppList",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.info",
+      "description": "One app in full, with file hashes and running state.",
+      "dry_run_by_default": false,
+      "example": {
+        "app": "vscodium"
+      },
+      "mutates": false,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "App id from app.list, the AppImage path, the menu entry path, or the exact name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "title": "Target",
+        "type": "object"
+      }
+    },
+    {
+      "command": "file.inspect",
+      "description": "Read any AppImage file's metadata without integrating it: name, version, architecture, type, embedded update information, built-in updater, and whether it is already integrated or is another version of an integrated app.",
+      "dry_run_by_default": false,
+      "example": {
+        "file": "/home/user/Downloads/App.AppImage",
+        "hashes": true
+      },
+      "mutates": false,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "hashes": {
+            "default": false,
+            "description": "Also compute md5, sha1 and sha256 (reads the whole file).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "FileInspect",
+        "type": "object"
+      }
+    },
+    {
+      "command": "file.list",
+      "description": "List the files inside an AppImage's embedded image (SquashFS or DwarFS) with sizes, read in-process without running it. prefix narrows the list.",
+      "dry_run_by_default": false,
+      "example": {
+        "file": "/home/user/Downloads/App.AppImage",
+        "prefix": "/usr/share/applications"
+      },
+      "mutates": false,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "prefix": {
+            "default": "",
+            "description": "Only paths starting with this prefix, e.g. /usr/share/applications.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "FileList",
+        "type": "object"
+      }
+    },
+    {
+      "command": "update.check",
+      "description": "Check apps for updates (empty apps = all). Each result has status available | up_to_date | self_updating | no_source | not_found | failed, a plain message, what was compared (sha1/sha256/sha512/size), and can_install. no_source and failed never mean up to date.",
+      "dry_run_by_default": false,
+      "example": {
+        "apps": []
+      },
+      "mutates": false,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "apps": {
+            "default": [],
+            "description": "App ids, paths or names. Empty means every app (where the command says so).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "title": "Targets",
+        "type": "object"
+      }
+    },
+    {
+      "command": "update.managers",
+      "description": "Update source types and the fields each one takes (Gear Lever names).",
+      "dry_run_by_default": false,
+      "example": {},
+      "mutates": false,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "Empty",
+        "type": "object"
+      }
+    },
+    {
+      "command": "settings.get",
+      "description": "Current settings with their meanings.",
+      "dry_run_by_default": false,
+      "example": {},
+      "mutates": false,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "Empty",
+        "type": "object"
+      }
+    },
+    {
+      "command": "gearlever.list",
+      "description": "Update sources and websites saved by Gear Lever for files that are integrated here (read-only).",
+      "dry_run_by_default": false,
+      "example": {},
+      "mutates": false,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "title": "Empty",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.requirements",
+      "description": "Will it start here? Which FUSE its runtime needs (fuse2 runtime vs static fuse3/uruntime), whether libfuse.so.2, fusermount/fusermount3 and /dev/fuse exist, and which libraries its main program needs that are neither bundled nor installed. verdict: ok | missing | unknown, with problems and fixes.",
+      "dry_run_by_default": false,
+      "example": {
+        "app": "vscodium"
+      },
+      "mutates": false,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "default": null,
+            "description": "An integrated app, or omit and give file.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "file": {
+            "default": null,
+            "description": "Any AppImage file.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "Requirements",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.integrate",
+      "description": "Add an AppImage to the app menu: move or copy it into the AppImages folder (see settings), extract its icon and write a menu entry. If another version is integrated, conflict decides: ask (refuse, the default), keep_both, or replace (in place, keeping arguments and environment).",
+      "dry_run_by_default": true,
+      "example": {
+        "conflict": "ask",
+        "file": "/home/user/Downloads/App.AppImage"
+      },
+      "mutates": true,
+      "params_schema": {
+        "$defs": {
+          "Conflict": {
+            "oneOf": [
+              {
+                "const": "ask",
+                "description": "Refuse when another version of the app is integrated (the default for agents).",
+                "type": "string"
+              },
+              {
+                "const": "keep_both",
+                "description": "Integrate next to the existing version, with the version in the menu name.",
+                "type": "string"
+              },
+              {
+                "const": "replace",
+                "description": "Replace the existing version's file in place, keeping its settings.",
+                "type": "string"
+              }
+            ]
+          },
+          "Source": {
+            "description": "A user-chosen update source. Field names match Gear Lever's so its\n`--set-update-source KEY=VALUE` options and saved settings carry over.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A fixed download URL; compared by size (or SHA-1 from a .zsync file).",
+                "properties": {
+                  "manager": {
+                    "const": "StaticFileUpdater",
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "url"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "GitHub releases. repo is OWNER/REPO, repo_filename a glob such as App-*-x86_64.AppImage.",
+                "properties": {
+                  "allow_prereleases": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "manager": {
+                    "const": "GithubUpdater",
+                    "type": "string"
+                  },
+                  "repo": {
+                    "type": "string"
+                  },
+                  "repo_filename": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "repo",
+                  "repo_filename"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "GitLab releases. repo_url is the project URL, e.g. https://gitlab.com/group/project.",
+                "properties": {
+                  "manager": {
+                    "const": "GitlabUpdater",
+                    "type": "string"
+                  },
+                  "repo_filename": {
+                    "type": "string"
+                  },
+                  "repo_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "repo_url",
+                  "repo_filename"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Codeberg releases. repo is OWNER/REPO.",
+                "properties": {
+                  "allow_prereleases": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "manager": {
+                    "const": "CodebergUpdater",
+                    "type": "string"
+                  },
+                  "repo": {
+                    "type": "string"
+                  },
+                  "repo_filename": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "repo",
+                  "repo_filename"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Any Forgejo or Gitea instance. repo_url is https://HOST/OWNER/REPO.",
+                "properties": {
+                  "allow_prereleases": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "manager": {
+                    "const": "ForgejoUpdater",
+                    "type": "string"
+                  },
+                  "repo_filename": {
+                    "type": "string"
+                  },
+                  "repo_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "repo_url",
+                  "repo_filename"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Anonymous FTP. url is ftp://HOST; filename a path pattern such as /pub/app/*/App-*.AppImage.",
+                "properties": {
+                  "filename": {
+                    "type": "string"
+                  },
+                  "manager": {
+                    "const": "FTPUpdater",
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "url",
+                  "filename"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "conflict": {
+            "$ref": "#/$defs/Conflict",
+            "default": "ask",
+            "description": "What to do when another version of the app is integrated: ask (refuse and list it), keep_both, replace."
+          },
+          "file": {
+            "type": "string"
+          },
+          "replace": {
+            "default": null,
+            "description": "App to replace when conflict is replace and several versions exist.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "update_source": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Source"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Integrate",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.update",
+      "description": "Download, verify and install updates. Running apps are updated in place: their open instance keeps the old version until restarted. Apps without an installable update are listed as skipped with the reason.",
+      "dry_run_by_default": true,
+      "example": {
+        "apps": [
+          "vscodium"
+        ]
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "all": {
+            "default": false,
+            "type": "boolean"
+          },
+          "apps": {
+            "default": [],
+            "description": "Apps to update. Empty with all=true updates every app with an installable update.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "title": "UpdateApply",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.remove",
+      "description": "Move AppImages, their menu entries and extracted icons to the desktop Trash. Nothing is deleted permanently.",
+      "dry_run_by_default": true,
+      "example": {
+        "apps": [
+          "vscodium"
+        ]
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "apps": {
+            "default": [],
+            "description": "App ids, paths or names. Empty means every app (where the command says so).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "title": "Targets",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.set-arguments",
+      "description": "Set the command line arguments in the app's menu entry.",
+      "dry_run_by_default": true,
+      "example": {
+        "app": "vscodium",
+        "arguments": "--ozone-platform=wayland %F"
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "arguments": {
+            "description": "One line, shell-style quoting, field codes like %U kept as is.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "arguments"
+        ],
+        "title": "Arguments",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.set-env",
+      "description": "Replace the environment variables the menu entry sets (env K=V before the program).",
+      "dry_run_by_default": true,
+      "example": {
+        "app": "vscodium",
+        "env": {
+          "DESKTOPINTEGRATION": "1"
+        }
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "The complete environment for the launcher (replaces the current one).",
+            "type": "object"
+          }
+        },
+        "required": [
+          "app",
+          "env"
+        ],
+        "title": "Env",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.set-website",
+      "description": "Save or forget the app's website.",
+      "dry_run_by_default": true,
+      "example": {
+        "app": "vscodium",
+        "url": "https://vscodium.com"
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "url": {
+            "description": "http(s) URL, or null to forget it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "title": "Website",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.set-icon",
+      "description": "Use your own PNG or SVG as the app's icon. It is copied next to the AppImage and kept across updates and menu refreshes.",
+      "dry_run_by_default": true,
+      "example": {
+        "app": "vscodium",
+        "file": "/home/user/Pictures/my-icon.png"
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "file": {
+            "description": "A PNG or SVG file to use as the app's icon.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app",
+          "file"
+        ],
+        "title": "Icon",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.reset-icon",
+      "description": "Use the icon shipped inside the AppImage again (the copied custom icon goes to the Trash).",
+      "dry_run_by_default": true,
+      "example": {
+        "app": "vscodium"
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "App id from app.list, the AppImage path, the menu entry path, or the exact name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "title": "Target",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.sync-menu",
+      "description": "Rewrite menu entries from each AppImage's own metadata (name, version, icon), keeping arguments and environment. Empty apps = every app whose menu entry is outdated. Gear Lever's \"Reload metadata\".",
+      "dry_run_by_default": true,
+      "example": {
+        "apps": []
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "apps": {
+            "default": [],
+            "description": "App ids, paths or names. Empty means every app (where the command says so).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "title": "Targets",
+        "type": "object"
+      }
+    },
+    {
+      "command": "update.set-source",
+      "description": "Set or remove an app's custom update source.",
+      "dry_run_by_default": true,
+      "example": {
+        "app": "vscodium",
+        "source": {
+          "allow_prereleases": false,
+          "manager": "GithubUpdater",
+          "repo": "VSCodium/vscodium",
+          "repo_filename": "VSCodium-*.AppImage"
+        }
+      },
+      "mutates": true,
+      "params_schema": {
+        "$defs": {
+          "Source": {
+            "description": "A user-chosen update source. Field names match Gear Lever's so its\n`--set-update-source KEY=VALUE` options and saved settings carry over.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "A fixed download URL; compared by size (or SHA-1 from a .zsync file).",
+                "properties": {
+                  "manager": {
+                    "const": "StaticFileUpdater",
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "url"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "GitHub releases. repo is OWNER/REPO, repo_filename a glob such as App-*-x86_64.AppImage.",
+                "properties": {
+                  "allow_prereleases": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "manager": {
+                    "const": "GithubUpdater",
+                    "type": "string"
+                  },
+                  "repo": {
+                    "type": "string"
+                  },
+                  "repo_filename": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "repo",
+                  "repo_filename"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "GitLab releases. repo_url is the project URL, e.g. https://gitlab.com/group/project.",
+                "properties": {
+                  "manager": {
+                    "const": "GitlabUpdater",
+                    "type": "string"
+                  },
+                  "repo_filename": {
+                    "type": "string"
+                  },
+                  "repo_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "repo_url",
+                  "repo_filename"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Codeberg releases. repo is OWNER/REPO.",
+                "properties": {
+                  "allow_prereleases": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "manager": {
+                    "const": "CodebergUpdater",
+                    "type": "string"
+                  },
+                  "repo": {
+                    "type": "string"
+                  },
+                  "repo_filename": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "repo",
+                  "repo_filename"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Any Forgejo or Gitea instance. repo_url is https://HOST/OWNER/REPO.",
+                "properties": {
+                  "allow_prereleases": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "manager": {
+                    "const": "ForgejoUpdater",
+                    "type": "string"
+                  },
+                  "repo_filename": {
+                    "type": "string"
+                  },
+                  "repo_url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "repo_url",
+                  "repo_filename"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Anonymous FTP. url is ftp://HOST; filename a path pattern such as /pub/app/*/App-*.AppImage.",
+                "properties": {
+                  "filename": {
+                    "type": "string"
+                  },
+                  "manager": {
+                    "const": "FTPUpdater",
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "manager",
+                  "url",
+                  "filename"
+                ],
+                "type": "object"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Source"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The source (see update.managers), or null to remove the custom one."
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "title": "SetSource",
+        "type": "object"
+      }
+    },
+    {
+      "command": "settings.set",
+      "description": "Change settings (only the given keys).",
+      "dry_run_by_default": true,
+      "example": {
+        "settings": {
+          "keep_replaced_versions_in_trash": true
+        }
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "settings": {
+            "additionalProperties": true,
+            "description": "Only the settings to change; see settings.get for names and values.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "settings"
+        ],
+        "title": "SettingsSet",
+        "type": "object"
+      }
+    },
+    {
+      "command": "gearlever.import",
+      "description": "Copy Gear Lever's update sources and websites into this app's settings (empty apps = all found). Gear Lever's files are only read.",
+      "dry_run_by_default": true,
+      "example": {
+        "apps": []
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "apps": {
+            "default": [],
+            "description": "App ids, paths or names. Empty means every app (where the command says so).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "title": "Targets",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.launch",
+      "description": "Start the app through its menu entry. Starts another program, so it needs --apply.",
+      "dry_run_by_default": true,
+      "example": {
+        "app": "vscodium"
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "App id from app.list, the AppImage path, the menu entry path, or the exact name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "title": "Target",
+        "type": "object"
+      }
+    },
+    {
+      "command": "app.open-folder",
+      "description": "Open the folder holding the AppImage in the file manager. Needs --apply.",
+      "dry_run_by_default": true,
+      "example": {
+        "app": "vscodium"
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "App id from app.list, the AppImage path, the menu entry path, or the exact name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "title": "Target",
+        "type": "object"
+      }
+    }
+  ],
+  "schema": "gearlever-cosmic-commands/1"
+}

@@ -1,0 +1,830 @@
+{
+  "$defs": {
+    "AppList": {
+      "additionalProperties": false,
+      "properties": {
+        "outdated_menu": {
+          "default": false,
+          "description": "Only apps whose menu entry no longer matches the file.",
+          "type": "boolean"
+        },
+        "search": {
+          "default": "",
+          "description": "Case-insensitive filter on name, id and path.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "Arguments": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "type": "string"
+        },
+        "arguments": {
+          "description": "One line, shell-style quoting, field codes like %U kept as is.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "app",
+        "arguments"
+      ],
+      "type": "object"
+    },
+    "Conflict": {
+      "oneOf": [
+        {
+          "const": "ask",
+          "description": "Refuse when another version of the app is integrated (the default for agents).",
+          "type": "string"
+        },
+        {
+          "const": "keep_both",
+          "description": "Integrate next to the existing version, with the version in the menu name.",
+          "type": "string"
+        },
+        {
+          "const": "replace",
+          "description": "Replace the existing version's file in place, keeping its settings.",
+          "type": "string"
+        }
+      ]
+    },
+    "Empty": {
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Env": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "The complete environment for the launcher (replaces the current one).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "app",
+        "env"
+      ],
+      "type": "object"
+    },
+    "FileInspect": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "hashes": {
+          "default": false,
+          "description": "Also compute md5, sha1 and sha256 (reads the whole file).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "type": "object"
+    },
+    "FileList": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "prefix": {
+          "default": "",
+          "description": "Only paths starting with this prefix, e.g. /usr/share/applications.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "type": "object"
+    },
+    "Icon": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "type": "string"
+        },
+        "file": {
+          "description": "A PNG or SVG file to use as the app's icon.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "app",
+        "file"
+      ],
+      "type": "object"
+    },
+    "Integrate": {
+      "additionalProperties": false,
+      "properties": {
+        "conflict": {
+          "$ref": "#/$defs/Conflict",
+          "default": "ask",
+          "description": "What to do when another version of the app is integrated: ask (refuse and list it), keep_both, replace."
+        },
+        "file": {
+          "type": "string"
+        },
+        "replace": {
+          "default": null,
+          "description": "App to replace when conflict is replace and several versions exist.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "update_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Source"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "type": "object"
+    },
+    "Requirements": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "default": null,
+          "description": "An integrated app, or omit and give file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "file": {
+          "default": null,
+          "description": "Any AppImage file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SetSource": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Source"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The source (see update.managers), or null to remove the custom one."
+        }
+      },
+      "required": [
+        "app"
+      ],
+      "type": "object"
+    },
+    "SettingsSet": {
+      "additionalProperties": false,
+      "properties": {
+        "settings": {
+          "additionalProperties": true,
+          "description": "Only the settings to change; see settings.get for names and values.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "settings"
+      ],
+      "type": "object"
+    },
+    "Source": {
+      "description": "A user-chosen update source. Field names match Gear Lever's so its\n`--set-update-source KEY=VALUE` options and saved settings carry over.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A fixed download URL; compared by size (or SHA-1 from a .zsync file).",
+          "properties": {
+            "manager": {
+              "const": "StaticFileUpdater",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "manager",
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "GitHub releases. repo is OWNER/REPO, repo_filename a glob such as App-*-x86_64.AppImage.",
+          "properties": {
+            "allow_prereleases": {
+              "default": false,
+              "type": "boolean"
+            },
+            "manager": {
+              "const": "GithubUpdater",
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "repo_filename": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "manager",
+            "repo",
+            "repo_filename"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "GitLab releases. repo_url is the project URL, e.g. https://gitlab.com/group/project.",
+          "properties": {
+            "manager": {
+              "const": "GitlabUpdater",
+              "type": "string"
+            },
+            "repo_filename": {
+              "type": "string"
+            },
+            "repo_url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "manager",
+            "repo_url",
+            "repo_filename"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Codeberg releases. repo is OWNER/REPO.",
+          "properties": {
+            "allow_prereleases": {
+              "default": false,
+              "type": "boolean"
+            },
+            "manager": {
+              "const": "CodebergUpdater",
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            },
+            "repo_filename": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "manager",
+            "repo",
+            "repo_filename"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Any Forgejo or Gitea instance. repo_url is https://HOST/OWNER/REPO.",
+          "properties": {
+            "allow_prereleases": {
+              "default": false,
+              "type": "boolean"
+            },
+            "manager": {
+              "const": "ForgejoUpdater",
+              "type": "string"
+            },
+            "repo_filename": {
+              "type": "string"
+            },
+            "repo_url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "manager",
+            "repo_url",
+            "repo_filename"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Anonymous FTP. url is ftp://HOST; filename a path pattern such as /pub/app/*/App-*.AppImage.",
+          "properties": {
+            "filename": {
+              "type": "string"
+            },
+            "manager": {
+              "const": "FTPUpdater",
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "manager",
+            "url",
+            "filename"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Target": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "description": "App id from app.list, the AppImage path, the menu entry path, or the exact name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "app"
+      ],
+      "type": "object"
+    },
+    "Targets": {
+      "additionalProperties": false,
+      "properties": {
+        "apps": {
+          "default": [],
+          "description": "App ids, paths or names. Empty means every app (where the command says so).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "UpdateApply": {
+      "additionalProperties": false,
+      "properties": {
+        "all": {
+          "default": false,
+          "type": "boolean"
+        },
+        "apps": {
+          "default": [],
+          "description": "Apps to update. Empty with all=true updates every app with an installable update.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Website": {
+      "additionalProperties": false,
+      "properties": {
+        "app": {
+          "type": "string"
+        },
+        "url": {
+          "description": "http(s) URL, or null to forget it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "app"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.list",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/AppList"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.info",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Target"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "file.inspect",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/FileInspect"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "file.list",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/FileList"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "update.check",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Targets"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "update.managers",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "settings.get",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "gearlever.list",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Empty"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.requirements",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Requirements"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.integrate",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Integrate"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.update",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/UpdateApply"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.remove",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Targets"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.set-arguments",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Arguments"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.set-env",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Env"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.set-website",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Website"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.sync-menu",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Targets"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.set-icon",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Icon"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.reset-icon",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Target"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "update.set-source",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/SetSource"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "settings.set",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/SettingsSet"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "gearlever.import",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Targets"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.launch",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Target"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "app.open-folder",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Target"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "Request"
+}

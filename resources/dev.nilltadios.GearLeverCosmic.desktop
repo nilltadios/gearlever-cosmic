@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Gear Lever COSMIC
+Comment=Add AppImages to your app menu and keep them updated
+Exec=gearlever-cosmic %F
+Icon=dev.nilltadios.GearLeverCosmic
+Terminal=false
+Categories=System;PackageManager;Utility;
+Keywords=appimage;integrate;update;menu;gear lever;cosmic;
+MimeType=application/vnd.appimage;application/x-iso9660-appimage;
+StartupNotify=true
+StartupWMClass=dev.nilltadios.GearLeverCosmic
+X-AppImage-Version=0.1.0

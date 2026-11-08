@@ -1,0 +1,67 @@
+[package]
+name = "gearlever-cosmic"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+description = "A native Rust and libcosmic AppImage manager with an agent CLI"
+default-run = "gearlever-cosmic"
+
+[features]
+default = ["gui", "gpu"]
+gui = ["dep:libcosmic", "dep:tokio", "dep:image", "dep:env_logger"]
+gpu = ["gui", "libcosmic/wgpu"]
+
+[dependencies]
+# Same Git source as Warehouse COSMIC; Cargo.lock pins the commit.
+libcosmic = { git = "https://github.com/pop-os/libcosmic", optional = true, default-features = false, features = ["wayland", "tokio", "a11y", "dbus-config", "xdg-portal", "single-instance"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", optional = true, features = ["time", "sync", "rt-multi-thread"] }
+url = "2"
+env_logger = { version = "0.11", optional = true }
+clap = { version = "4", features = ["derive"] }
+schemars = "1"
+ctrlc = "3"
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+zbus = { version = "6", default-features = false, features = ["tokio-multithread", "proxy", "service"] }
+trash = "5"
+backhand = { version = "0.25", default-features = false, features = ["gzip", "xz", "zstd", "lz4"] }
+ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
+sha1 = "0.11"
+sha2 = "0.11"
+md-5 = "0.11"
+base64 = "0.23"
+glob = "0.3"
+dwarfs = { version = "0.2", default-features = false, features = ["zstd", "lz4", "lzma"] }
+suppaftp = { version = "12", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[profile.flatpak-dev]
+inherits = "release"
+lto = false
+codegen-units = 256
+incremental = true
+
+[[bin]]
+name = "gearlever-cosmic"
+path = "src/main.rs"
+required-features = ["gui"]
+
+[[bin]]
+name = "gearlever-cosmic-cli"
+path = "src/cli_main.rs"
+
+# DwarFS images from mkdwarfs 0.14+ (current uruntime/Anylinux AppImages,
+# including this app's own) declare the "sparsefiles" feature, which dwarfs
+# 0.2.1 refuses. Pinned to the open upstream PR that adds it,
+# https://github.com/oxalica/dwarfs-rs/pull/1 (reviewed 2026-11-08). Drop this
+# when a dwarfs release includes it.
+[patch.crates-io]
+dwarfs = { git = "https://github.com/QaidVoid/dwarfs-rs", rev = "c008c05d232dde4f24280f0458cdbbf70e170f88" }

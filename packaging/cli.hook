@@ -1,0 +1,10 @@
+# Gear Lever COSMIC: run the agent CLI instead of the window when asked.
+#   GearLever_COSMIC-x86_64.AppImage cli ARGS...
+#   a symlink to the AppImage named gearlever-cosmic-cli
+case "${ARG0##*/}" in
+	gearlever-cosmic-cli*) exec "$APPDIR"/bin/gearlever-cosmic-cli "$@" ;;
+esac
+if [ "${1:-}" = cli ]; then
+	shift
+	exec "$APPDIR"/bin/gearlever-cosmic-cli "$@"
+fi

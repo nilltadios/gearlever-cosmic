@@ -1,0 +1,21 @@
+# Gear Lever COSMIC
+
+Native Rust/libcosmic AppImage manager with a headless agent CLI. Shipped as an AppImage.
+
+- CLI executable: gearlever-cosmic-cli (inside the AppImage: `GearLever_COSMIC-x86_64.AppImage cli ...`)
+- Start here: gearlever-cosmic-cli guide
+- Full docs from the CLI: gearlever-cosmic-cli docs [llms|cli|agents|ui-cli|updates|parity]
+- Discover: gearlever-cosmic-cli commands --json
+- Describe: gearlever-cosmic-cli describe COMMAND
+- Request schema: gearlever-cosmic-cli schema
+- Run: gearlever-cosmic-cli run --cmd 'command.id={"param":"value"}'
+- Scripts: gearlever-cosmic-cli run --script job.json
+- Changes are plans unless --apply is supplied.
+- update.check statuses: available, up_to_date, self_updating, no_source, not_found, failed. Only up_to_date means compared and current.
+- Updates are applied in place; running apps keep working and switch on restart.
+- Versions come from the AppImage file itself; menu_outdated flags stale menu entries.
+- app.requirements: FUSE runtime needs (libfuse.so.2 vs static), fusermount, missing libraries.
+- Gear Lever compatible options: --integrate, --update, --remove, --list-installed, --list-updates, --set-update-source (changes need -y).
+- ui commands: inspect/control the live window through its own D-Bus interface; nothing else.
+- docs/cli.md: contract, exit codes, roots. docs/agents.md: workflow. docs/updates.md: sources and statuses.
+- schemas/commands.json and schemas/request.json: generated catalog and request schema.

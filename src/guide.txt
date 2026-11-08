@@ -1,0 +1,60 @@
+Gear Lever COSMIC: agent guide
+
+gearlever-cosmic-cli manages AppImages: add them to the app menu, update them
+(in place, also while they run), edit launch options, and check whether they
+can start on this system. It works directly without a window (1), or by
+operating the open window like a person would (2).
+From the AppImage, run every command as:  GearLever_COSMIC-x86_64.AppImage cli ...
+
+1. Direct commands (no window needed). Same backend as the GUI.
+   commands --json            every command id, effects and parameter schema
+   describe COMMAND           one command, with an example
+   inspect                    all integrated apps, running state, settings
+   run --cmd 'ID={json}'      run commands; changes print a dry-run plan
+   run --apply --cmd ...      perform the plan you reviewed
+   Exit codes: 0 ok, 1 backend failure, 2 invalid request (also: conflict,
+   already integrated), 3 missing target or no update, 4 path refused,
+   5 cancelled, 6 another operation holds the lock.
+
+2. Live GUI (see and do what a person sees and does).
+   ui instances               running windows; pass --instance ID when several run
+   ui start                   present the window, or start one; --config-dir DIR for a test instance
+   ui inspect                 page, dialog, page content ("view"), text fields ("fields")
+                              and every clickable control ("controls") with what it needs
+   ui activate CONTROL        same handler as clicking it; --apply for changes or for
+                              starting another program (launch, open folder)
+   ui fill FIELD TEXT         type into a listed field (search, app.args, icon.path, ...)
+   ui navigate PAGE           apps, updates, add
+   ui open FILE...            open AppImages for review, like Open or drag and drop
+   ui wait                    until loading, update checks and operations finish
+   ui capture /abs/new.png    the window's own render
+
+Common tasks
+   What is installed, real versions:   run --cmd 'app.list={}'
+   Menu entries showing a wrong version: run --cmd 'app.list={"outdated_menu":true}'
+   Check for updates (honest):         run --cmd 'update.check={}'
+       status: available | up_to_date | self_updating | no_source | not_found | failed
+       no_source and failed never mean "up to date"; self_updating means the app
+       has its own updater (update_known says whether a newer version was seen).
+   Install updates:                    run --apply --cmd 'app.update={"apps":["ID"]}'
+   Will it start here (FUSE, libs):    run --cmd 'app.requirements={"app":"ID"}'
+   Add a file to the menu:             run --cmd 'app.integrate={"file":"/abs/App.AppImage"}'
+   Use your own icon / the official:   app.set-icon / app.reset-icon
+   Fix menu entries after self-updates: run --apply --cmd 'app.sync-menu={}'
+
+Gear Lever's options work too: --integrate FILE, --update FILE|--all,
+--remove FILE, --list-installed [--json], --list-updates [--json],
+--list-update-managers, --set-update-source FILE --manager NAME KEY=VALUE.
+Their changes need -y (or --apply); without it they print the plan.
+
+Rules
+- Changes are plans until --apply. Removed files go to the desktop Trash.
+- Updates replace the file in place; a running app keeps the old version
+  until it restarts. The replaced file goes to the Trash (setting).
+- The CLI never controls other apps' windows or input; it manages AppImages as
+  files and menu entries, and starts them only with --apply.
+- Do not retry a failed change blindly: read its report and the new state.
+
+Full documentation, printed by this CLI:
+  docs                       list topics
+  docs cli | agents | ui-cli | updates | parity

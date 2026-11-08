@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Symbolic Gear Lever COSMIC icon: gear with a package box in its hub. Original artwork. -->
+  <path d="M13.73 6.58 L15.50 6.75 L15.50 9.25 L13.73 9.42 L13.05 11.04 L14.18 12.42 L12.42 14.18 L11.04 13.05 L9.42 13.73 L9.25 15.50 L6.75 15.50 L6.58 13.73 L4.96 13.05 L3.58 14.18 L1.82 12.42 L2.95 11.04 L2.27 9.42 L0.50 9.25 L0.50 6.75 L2.27 6.58 L2.95 4.96 L1.82 3.58 L3.58 1.82 L4.96 2.95 L6.58 2.27 L6.75 0.50 L9.25 0.50 L9.42 2.27 L11.04 2.95 L12.42 1.82 L14.18 3.58 L13.05 4.96Z M8 3.6a4.4 4.4 0 1 0 0 8.8a4.4 4.4 0 1 0 0-8.8Z" fill="#bebebe" fill-rule="evenodd"/>
+  <rect x="5.6" y="6" width="4.8" height="4" rx=".6" fill="#bebebe"/>
+</svg>

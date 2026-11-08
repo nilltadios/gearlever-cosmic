@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.nilltadios.GearLeverCosmic</id>
+  <name>Gear Lever COSMIC</name>
+  <summary>Add AppImages to your app menu and keep them updated</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <url type="homepage">https://github.com/nilltadios/gearlever-cosmic</url>
+  <developer id="dev.nilltadios"><name>nilltadios</name></developer>
+  <description>
+    <p>Add AppImages to your app menu, keep them updated, and see clearly what can and cannot be updated. Inspired by Gear Lever and rewritten in Rust with libcosmic.</p>
+    <p>Updates replace the file in place, so running apps keep working and switch to the new version when they restart. Versions are read from the AppImage itself, menu entries are refreshed when an app updated itself, and apps with their own updater are labelled as such. It also checks whether an AppImage can start on this system (FUSE 2 or FUSE 3, missing libraries).</p>
+    <p>A command line tool with typed commands, dry-run plans and live window controls makes everything usable by scripts and AI agents.</p>
+  </description>
+  <launchable type="desktop-id">dev.nilltadios.GearLeverCosmic.desktop</launchable>
+  <categories><category>System</category><category>PackageManager</category></categories>
+  <provides><binary>gearlever-cosmic</binary><binary>gearlever-cosmic-cli</binary></provides>
+  <content_rating type="oars-1.1"/>
+  <releases><release version="0.1.0" date="2026-11-07"><description><p>First release: Gear Lever's features in a native COSMIC app, in-place updates of running apps, honest update statuses, versions read from the file (Gear Lever issue #497), system requirement checks, custom icons that survive updates, and an agent CLI.</p></description></release></releases>
+</component>

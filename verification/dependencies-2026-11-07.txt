@@ -1,0 +1,23 @@
+serde                  req 1        locked 1.0.229    latest 1.0.229    ok
+serde_json             req 1        locked 1.0.154    latest 1.0.154    ok
+tokio                  req 1        locked 1.54.1     latest 1.54.1     ok
+url                    req 2        locked 2.5.8      latest 2.5.8      ok
+env_logger             req 0.11     locked 0.11.11    latest 0.11.11    ok
+clap                   req 4        locked 4.6.7      latest 4.6.7      ok
+schemars               req 1        locked            latest 1.2.3      ok
+ctrlc                  req 3        locked 3.5.2      latest 3.5.2      ok
+image                  req 0.25     locked 0.25.10    latest 0.25.10    ok
+zbus                   req 6        locked            latest 6.2.1      ok
+trash                  req 5        locked 5.3.0      latest 5.3.0      ok
+backhand               req 0.25     locked 0.25.5     latest 0.25.5     ok
+ureq                   req 3        locked 3.5.1      latest 3.5.1      ok
+sha1                   req 0.11     locked 0.11.0     latest 0.11.0     ok
+sha2                   req 0.11     locked            latest 0.11.1     ok
+md-5                   req 0.11     locked 0.11.0     latest 0.11.0     ok
+base64                 req 0.22     locked            latest 0.23.1     NEWER
+glob                   req 0.3      locked 0.3.4      latest 0.3.4      ok
+dwarfs                 req 0.2      locked 0.2.1      latest 0.2.1      ok
+suppaftp               req 12       locked 12.2.1     latest 12.2.1     ok
+tempfile               req 3        locked 3.27.0     latest 3.27.0     ok
+libcosmic pinned dd108aa99d73 upstream dd108aa99d73 ok
+rust: rustc 1.99.1 (58cf8f9c3 2026-10-13) (latest stable: 1.99.1 (58cf8f9c3 2026-10-13))

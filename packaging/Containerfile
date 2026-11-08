@@ -1,0 +1,13 @@
+# Build environment: Ubuntu 26.04 with the tools quick-sharun needs.
+# The AppImage bundles its own glibc (sharun), so the build system's version
+# does not limit where it runs.
+FROM docker.io/library/ubuntu:26.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates curl wget git build-essential pkg-config libxkbcommon-dev libwayland-dev \
+      libvulkan1 mesa-vulkan-drivers libegl1 libgl1 libgles2 libwayland-egl1 libxkbcommon0 \
+      patchelf strace file binutils xz-utils zstd python3 desktop-file-utils \
+    && rm -rf /var/lib/apt/lists/*
+ARG RUST=1.99.1
+RUN curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST"
+ENV PATH=/root/.cargo/bin:$PATH
+WORKDIR /src

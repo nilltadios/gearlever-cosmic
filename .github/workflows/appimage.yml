@@ -1,0 +1,100 @@
+name: Build and release AppImage
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appimage-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    # Same environment as packaging/Containerfile. The AppImage bundles its
+    # own glibc (sharun), so the build distribution does not limit where it runs.
+    container:
+      image: docker.io/library/ubuntu:26.04
+    steps:
+      - name: Install build tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl wget git build-essential pkg-config libxkbcommon-dev libwayland-dev \
+            libxkbcommon0 patchelf strace file binutils xz-utils zstd python3 desktop-file-utils
+      - uses: actions/checkout@v7
+      - name: Install Rust from rust-toolchain.toml
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"])')
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$version" -c rustfmt,clippy
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-
+      - name: Format, lint, test
+        run: |
+          cargo fmt --all --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo test --locked
+      - name: Build release binaries
+        run: cargo build --locked --release --bins --examples
+      - name: CLI workflow on a disposable home (fixture AppImages, local update server)
+        run: verification/cli-workflow.sh target/release/gearlever-cosmic-cli
+      - name: Build the AppImage (Anylinux / quick-sharun)
+        run: packaging/build-appimage.sh target/release dist
+      - name: Smoke test the AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          app=$(ls dist/*.AppImage)
+          "$app" cli --version
+          "$app" cli commands --json > /dev/null
+          HOME="$(mktemp -d)" "$app" cli run --cmd 'app.list={}' > /dev/null
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gearlever-cosmic-x86_64
+          path: |
+            dist/*.AppImage
+            dist/*.zsync
+            dist/*.sha256
+
+  release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: gearlever-cosmic-x86_64
+          path: dist
+      - name: Publish a release for a new version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')
+          if gh release view "v$version" > /dev/null 2>&1; then
+            echo "::notice::v$version is already released. Bump the version in Cargo.toml and the metainfo to publish a new one."
+            exit 0
+          fi
+          notes=$(python3 - "$version" <<'PY'
+          import re, sys, xml.etree.ElementTree as ET
+          root = ET.parse("resources/dev.nilltadios.GearLeverCosmic.metainfo.xml").getroot()
+          for r in root.iter("release"):
+              if r.get("version") == sys.argv[1]:
+                  print(" ".join(p.text or "" for p in r.iter("p")))
+          PY
+          )
+          gh release create "v$version" dist/*.AppImage dist/*.zsync dist/*.sha256 \
+            --title "Gear Lever COSMIC $version" --notes "${notes:-Release $version}"

@@ -1,0 +1,11 @@
+/target
+/verification/out-*/
+/verification/*.log
+/flatpak/build-inputs*/
+/flatpak/out*/
+/flatpak/cache/
+/.flatpak-builder/
+/packaging/cache/
+/dist/
+/verification/ab-cli/
+/verification/out-current-*.txt
