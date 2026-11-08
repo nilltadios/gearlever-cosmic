@@ -13,8 +13,12 @@ fn main() -> cosmic::iced::Result {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
+                let own = gearlever_cosmic::appimage_self()
+                    .map(|p| gearlever_cosmic::shell_quote(&p.to_string_lossy()))
+                    .unwrap_or_else(|| "gearlever-cosmic".into());
+                let cli = gearlever_cosmic::cli_command();
                 println!(
-                    "Gear Lever COSMIC\n\ngearlever-cosmic [FILE.AppImage...]\n  --preview PAGE      Open apps, app, updates, add, drop, settings, about or remove (add -narrow for the minimum width)\n  --capture FILE.png  Save the window's own render and exit\n  --help              Show this help\n\nAgents and scripts: gearlever-cosmic-cli manages AppImages without a window and\ncontrols this window (ui inspect / ui activate). Start with:\n  gearlever-cosmic-cli guide"
+                    "Gear Lever COSMIC\n\n{own} [FILE.AppImage...]\n  --preview PAGE      Open apps, app, updates, add, drop, settings, about or remove (add -narrow for the minimum width)\n  --capture FILE.png  Save the window's own render and exit\n  --help              Show this help\n\nAgents and scripts: the command below manages AppImages without a window\nand controls this window (ui inspect / ui activate). Start with:\n  {cli} guide"
                 );
                 return Ok(());
             }

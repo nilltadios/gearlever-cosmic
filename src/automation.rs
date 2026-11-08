@@ -22,8 +22,6 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-const NAME: &str = "gearlever-cosmic-cli";
-
 #[derive(Parser)]
 #[command(
     name = "gearlever-cosmic-cli",
@@ -1522,11 +1520,14 @@ fn fetch_updates(ctx: &Context) -> Result<Value> {
 fn run_cli(cli: Cli) -> Result<Value> {
     match cli.action {
         Action::Ui(args) => crate::ui_client::run(args).map_err(failure),
-        Action::Guide => print(include_str!("guide.txt")),
+        Action::Guide => print(&crate::with_cli_command(include_str!("guide.txt"))),
         Action::Docs { topic } => {
             let text = match topic.as_deref() {
                 None => {
-                    let mut list = format!("Documentation topics ({NAME} docs TOPIC):\n");
+                    let mut list = format!(
+                        "Documentation topics ({} docs TOPIC):\n",
+                        crate::cli_command()
+                    );
                     for (name, summary, _) in DOCS {
                         list.push_str(&format!("  {name:<10} {summary}\n"));
                     }
@@ -1535,7 +1536,7 @@ fn run_cli(cli: Cli) -> Result<Value> {
                 Some(name) => DOCS
                     .iter()
                     .find(|(t, ..)| *t == name.trim_end_matches(".md"))
-                    .map(|(.., text)| text.to_string())
+                    .map(|(.., text)| crate::with_cli_command(text))
                     .ok_or_else(|| {
                         invalid(format!(
                             "Unknown topic {name}; available: {}",
@@ -1691,7 +1692,13 @@ fn normalize_args(mut args: Vec<String>) -> Vec<String> {
 }
 
 pub fn main_entry() -> ExitCode {
-    let cli = match Cli::try_parse_from(normalize_args(std::env::args().collect())) {
+    use clap::{CommandFactory, FromArgMatches};
+    let bin_name = crate::cli_command();
+    let parsed = Cli::command()
+        .bin_name(bin_name)
+        .try_get_matches_from(normalize_args(std::env::args().collect()))
+        .and_then(|m| Cli::from_arg_matches(&m));
+    let cli = match parsed {
         Ok(c) => c,
         Err(e) => {
             if e.exit_code() == 0 {

@@ -42,12 +42,77 @@ pub fn appimage_self() -> Option<std::path::PathBuf> {
         .filter(|p| p.is_absolute() && p.is_file())
 }
 
+/// The command that starts the agent CLI, as a user would type it: the
+/// AppImage's full path plus `cli` when running from an AppImage (or the
+/// symlink it was started through), the CLI's name when that resolves on
+/// PATH to this build, its full path otherwise.
+pub fn cli_command() -> String {
+    const NAME: &str = "gearlever-cosmic-cli";
+    if let Some(appimage) = appimage_self() {
+        if let Some(arg0) = std::env::var_os("ARGV0").or_else(|| std::env::var_os("ARG0")) {
+            let arg0 = std::path::PathBuf::from(arg0);
+            if arg0
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(NAME))
+            {
+                return shell_quote(&arg0.to_string_lossy());
+            }
+        }
+        return format!("{} cli", shell_quote(&appimage.to_string_lossy()));
+    }
+    let Some(own) = std::env::current_exe().ok().map(|e| e.with_file_name(NAME)) else {
+        return NAME.into();
+    };
+    let on_path = std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|d| {
+            let c = d.join(NAME);
+            c.is_file() && c.canonicalize().ok() == own.canonicalize().ok()
+        })
+    });
+    if on_path || !own.is_file() {
+        NAME.into()
+    } else {
+        shell_quote(&own.to_string_lossy())
+    }
+}
+
+/// Quote a word for a POSIX shell only when it needs it.
+pub fn shell_quote(word: &str) -> String {
+    if !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+=:,@%~".contains(c))
+    {
+        word.into()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
+}
+
+/// Bundled text with the CLI's name replaced by [`cli_command`].
+pub fn with_cli_command(text: &str) -> String {
+    let command = cli_command();
+    if command == "gearlever-cosmic-cli" {
+        return text.into();
+    }
+    text.replace("gearlever-cosmic-cli ", &format!("{command} "))
+}
+
 /// Variables an AppImage runtime sets for itself; programs this app starts
 /// must not inherit them.
 pub const APPIMAGE_ENV: [&str; 5] = ["APPIMAGE", "APPDIR", "ARGV0", "ARG0", "OWD"];
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shell_quote_leaves_plain_paths_and_quotes_the_rest() {
+        assert_eq!(
+            super::shell_quote("/home/me/AppImages/gear_lever_cosmic.appimage"),
+            "/home/me/AppImages/gear_lever_cosmic.appimage"
+        );
+        assert_eq!(super::shell_quote("/a b/it's"), "'/a b/it'\\''s'");
+    }
+
     #[test]
     fn an_inherited_appimage_variable_is_not_our_appimage() {
         // Tests run from target/, never inside an APPDIR.

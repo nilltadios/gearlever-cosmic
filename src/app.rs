@@ -2456,7 +2456,7 @@ impl cosmic::Application for App {
                     "Manage AppImages: add them to the app menu, keep them updated in place, and see clearly what can and cannot be updated. Inspired by Gear Lever by mijorus, rewritten in Rust with libcosmic.\n\nGPL-3.0-or-later · Version {}",
                     env!("CARGO_PKG_VERSION")
                 ))
-                .control(widget::text::caption("Shortcuts: Ctrl+O open · Ctrl+F filter · Ctrl+R or F5 refresh · Ctrl+, settings · Ctrl+1/2/3 pages · Escape goes back. Agents: gearlever-cosmic-cli guide"))
+                .control(widget::text::caption(format!("Shortcuts: Ctrl+O open · Ctrl+F filter · Ctrl+R or F5 refresh · Ctrl+, settings · Ctrl+1/2/3 pages · Escape goes back. Agents: {} guide", gearlever_cosmic::cli_command())))
                 .primary_action(widget::button::suggested("Close").id(widget::Id::new("dialog.cancel")).on_press(Message::CloseDialog))
                 .into(),
         })
