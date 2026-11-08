@@ -11,6 +11,7 @@ Run from the project root. Every script prints `ok:` lines and `PASS`, exits non
 | FUSE on another system | `verification/check-requirements.sh APP_ID` | A FUSE 2 AppImage reported as missing libfuse.so.2 on a simulated fuse3-only system |
 | Dependencies | `verification/check-dependencies.sh` | Crates, libcosmic and Rust against their latest releases |
 | A/B with Gear Lever | `verification/ab-gearlever.sh` | Both CLIs on the real installed apps (read-only) and on a fixture home; findings in `docs/parity.md` |
+| Resource use vs Gear Lever | `verification/resource-usage.sh [APPIMAGE] [RUNS]` | Start to window, memory (RSS and PSS of the whole process tree, including the AppImage mount), idle CPU, size on disk, CLI time and peak memory, on the same fixture. 2026-11-08, 3 runs, medians: start 0.48 s vs 0.73 s, PSS 73 MB vs 121 MB, CLI listing 0.22 s vs 0.37 s, 19 MB vs 26 MB plus a 1.1 GB runtime |
 | AppImage | `packaging/build-appimage.sh && dist/*.AppImage cli --version && dist/*.AppImage --preview app --capture /abs.png` | Packaging, bundled glibc, host GPU drivers, CLI hook |
 
 Renders must be looked at: a file existing is not proof that the layout is right. Pointer hover, native file choosers and real compositor drag and drop are not automated; check them by hand.

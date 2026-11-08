@@ -16,5 +16,5 @@
   <categories><category>System</category><category>PackageManager</category></categories>
   <provides><binary>gearlever-cosmic</binary><binary>gearlever-cosmic-cli</binary></provides>
   <content_rating type="oars-1.1"/>
-  <releases><release version="0.1.0" date="2026-11-07"><description><p>First release: Gear Lever's features in a native COSMIC app, in-place updates of running apps, honest update statuses, versions read from the file (Gear Lever issue #497), system requirement checks, custom icons that survive updates, and an agent CLI.</p></description></release></releases>
+  <releases><release version="0.1.1" date="2026-11-08"><description><p>Faster and lighter: command-line output can be captured in 0.2 s instead of 6 s, the window uses about 40% less memory than before, AppImages built with current DwarFS tools (including this one) are read correctly, and refreshing a menu entry restores missing details such as the window icon match.</p></description></release><release version="0.1.0" date="2026-11-07"><description><p>First release: Gear Lever's features in a native COSMIC app, in-place updates of running apps, honest update statuses, versions read from the file (Gear Lever issue #497), system requirement checks, custom icons that survive updates, and an agent CLI.</p></description></release></releases>
 </component>

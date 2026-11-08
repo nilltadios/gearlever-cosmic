@@ -28,6 +28,18 @@ if [[ ! -f $qs ]] || ! echo "$QS_SHA  $qs" | sha256sum -c --status; then
   mv "$qs.part" "$qs"
 fi
 chmod +x "$qs"
+# The runtime appimagetool would download (same pinned version and SHA-256),
+# with settings embedded. REUSE_CHECK_DELAY=0: otherwise uruntime keeps its mount helper
+# alive for reuse, holding the caller's stdout open, so `out=$(AppImage cli ...)`
+# took about 6 s instead of 0.2 s.
+RT_URL=https://github.com/VHSgunzo/uruntime/releases/download/v0.8.1/uruntime-appimage-dwarfs-lite-x86_64
+RT_SHA=b3c2916153e089d703cee5a7ebc540941d2f1d71baa90eb3092b15eef48345a8
+rt_cache="$cache/uruntime-appimage-dwarfs-lite-v0.8.1-x86_64"
+if [[ ! -f $rt_cache ]] || ! echo "$RT_SHA  $rt_cache" | sha256sum -c --status; then
+  curl -fsSL -o "$rt_cache.part" "$RT_URL"
+  echo "$RT_SHA  $rt_cache.part" | sha256sum -c --status || { echo "uruntime checksum mismatch" >&2; rm -f "$rt_cache.part"; exit 1; }
+  mv "$rt_cache.part" "$rt_cache"
+fi
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
 sed "s/^X-AppImage-Version=.*/X-AppImage-Version=$version/" resources/$app.desktop > "$work/$app.desktop"
@@ -53,6 +65,15 @@ export STRACE_MODE=0
 export GEARLEVER_COSMIC_UI_ISOLATED=1
 qs_home="$work/home"; mkdir -p "$qs_home"
 export TMPDIR="$work"
+cp "$rt_cache" "$work/uruntime" && chmod +x "$work/uruntime"
+# DWARFS_CACHESIZE=64M: the default block cache made the mount process about
+# 85 MB; 64 MB halves that with no slower start (16-32 MB made starts ~3 s).
+# See verification/resource-usage.sh.
+"$work/uruntime" --appimage-addenvs $'REUSE_CHECK_DELAY=0\nDWARFS_CACHESIZE=64M' >/dev/null
+for v in REUSE_CHECK_DELAY=0 DWARFS_CACHESIZE=64M; do
+  "$work/uruntime" --appimage-envs | grep -qx "$v" || { echo "could not embed $v" >&2; exit 1; }
+done
+export RUNTIME="$work/uruntime"
 # The font library mentions /usr/share/fonts, which makes quick-sharun copy
 # every system font (670 MB here). The app reads the host's fonts, so an
 # existing (empty) folder tells quick-sharun to skip the copy.
