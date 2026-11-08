@@ -573,6 +573,30 @@
       }
     },
     {
+      "command": "app.rename-file",
+      "description": "Rename an AppImage, its menu entry and icons to the standard name a fresh install gets (name.appimage), e.g. to drop a version left in the name by a first install. app.list shows the target as standard_path; refused when the name is already standard or taken. A running instance keeps working.",
+      "dry_run_by_default": true,
+      "example": {
+        "app": "vscodium"
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "app": {
+            "description": "App id from app.list, the AppImage path, the menu entry path, or the exact name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app"
+        ],
+        "title": "Target",
+        "type": "object"
+      }
+    },
+    {
       "command": "app.set-icon",
       "description": "Use your own PNG or SVG as the app's icon. It is copied next to the AppImage and kept across updates and menu refreshes.",
       "dry_run_by_default": true,

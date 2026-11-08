@@ -156,6 +156,7 @@ pub enum Message {
     IconPicked(Result<PathBuf, String>),
     SetIconFromField,
     ResetIcon,
+    RenameFile(String),
     Confirm,
     CloseDialog,
     Finished(Box<Result<Report, String>>),
@@ -1332,6 +1333,23 @@ impl App {
                         ),
                 ),
         );
+        if let Some(target) = &a.standard_path {
+            info = info.add(
+                widget::settings::item::builder("File name")
+                    .description(format!(
+                        "{} differs from the standard name {}",
+                        a.path.file_name().unwrap_or_default().to_string_lossy(),
+                        target.file_name().unwrap_or_default().to_string_lossy()
+                    ))
+                    .control(
+                        widget::button::standard("Use Standard Name")
+                            .id(widget::Id::new("app.rename-file"))
+                            .on_press_maybe(
+                                (!self.busy()).then(|| Message::RenameFile(a.id.clone())),
+                            ),
+                    ),
+            );
+        }
         info = info.add(
             widget::settings::item::builder("Menu entry")
                 .description(self.paths.short(&a.desktop_file))
@@ -2799,6 +2817,16 @@ impl cosmic::Application for App {
                             self.notice = Some(format!("{} is not a PNG or SVG image", p.display()))
                         }
                     }
+                }
+            }
+            Message::RenameFile(id) => {
+                if let Some(app) = self.app(&id).cloned()
+                    && let Some(target) = app.standard_path.clone()
+                {
+                    // Keep the details open: the id follows the new file name.
+                    self.selected = target.file_stem().map(|s| s.to_string_lossy().into_owned());
+                    self.edit_for = None;
+                    return self.run_ops(vec![Operation::RenameFile(app, target)]);
                 }
             }
             Message::ResetIcon => {

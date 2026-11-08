@@ -73,6 +73,9 @@ pub struct App {
     pub update_source_origin: Option<Origin>,
     /// A Gear Lever source that could not be used, with the reason.
     pub update_source_error: Option<String>,
+    /// The standard file name this app could be renamed to (`app.rename-file`),
+    /// when its current name differs, e.g. a version left from a first install.
+    pub standard_path: Option<PathBuf>,
     pub website: Option<String>,
     pub metadata_error: Option<String>,
     #[serde(skip)]
@@ -235,6 +238,9 @@ pub fn load(paths: &Paths, settings: &Settings) -> Inventory {
         ));
     }
     inv.apps.sort_by_key(|a| a.name.to_lowercase());
+    for i in 0..inv.apps.len() {
+        inv.apps[i].standard_path = crate::ops::standard_path(paths, settings, &inv.apps[i]);
+    }
     inv
 }
 
@@ -363,6 +369,7 @@ fn build(
         update_source,
         update_source_origin: origin,
         update_source_error: source_error,
+        standard_path: None,
         website: config
             .website
             .clone()

@@ -292,6 +292,8 @@ pub enum Request {
     SetWebsite(Website),
     #[serde(rename = "app.sync-menu")]
     SyncMenu(Targets),
+    #[serde(rename = "app.rename-file")]
+    RenameFile(Target),
     #[serde(rename = "app.set-icon")]
     SetIcon(Icon),
     #[serde(rename = "app.reset-icon")]
@@ -454,6 +456,12 @@ pub fn catalog() -> Vec<Value> {
             "Save or forget the app's website.",
             true,
             json!({"app":"vscodium","url":"https://vscodium.com"}),
+        ),
+        entry::<Target>(
+            "app.rename-file",
+            "Rename an AppImage, its menu entry and icons to the standard name a fresh install gets (name.appimage), e.g. to drop a version left in the name by a first install. app.list shows the target as standard_path; refused when the name is already standard or taken. A running instance keeps working.",
+            true,
+            json!({"app":"vscodium"}),
         ),
         entry::<Icon>(
             "app.set-icon",
@@ -804,6 +812,16 @@ pub fn prepare(
                 return Err(invalid("Choose a PNG or SVG image"));
             }
             vec![Operation::SetIcon(find(inv, &p.app)?.clone(), file)]
+        }
+        Request::RenameFile(p) => {
+            let app = find(inv, &p.app)?;
+            let target = ops::standard_path(&ctx.paths, &ctx.settings, app).ok_or_else(|| {
+                invalid(format!(
+                    "{} already has its standard name, or that name is taken",
+                    app.name
+                ))
+            })?;
+            vec![Operation::RenameFile(app.clone(), target)]
         }
         Request::ResetIcon(p) => vec![Operation::ResetIcon(find(inv, &p.app)?.clone())],
         Request::SetSource(p) => {

@@ -14,6 +14,7 @@ Native Rust/libcosmic AppImage manager with a headless agent CLI. Shipped as an 
 - update.check statuses: available, up_to_date, self_updating, no_source, not_found, failed. Only up_to_date means compared and current.
 - Updates are applied in place; running apps keep working and switch on restart.
 - Versions come from the AppImage file itself; menu_outdated flags stale menu entries.
+- app.rename-file: gives an app with a versioned file name (e.g. App-1.2-x86_64.appimage) its standard name app.appimage; app.list shows standard_path when offered.
 - app.requirements: FUSE runtime needs (libfuse.so.2 vs static), fusermount, missing libraries.
 - Gear Lever compatible options: --integrate, --update, --remove, --list-installed, --list-updates, --set-update-source (changes need -y).
 - ui commands: inspect/control the live window through its own D-Bus interface; nothing else.

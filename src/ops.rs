@@ -61,6 +61,9 @@ pub enum Operation {
     SetSource(App, Option<Source>),
     /// Use the user's own image as the app's icon; it survives updates.
     SetIcon(App, PathBuf),
+    /// Rename the AppImage, its menu entry and icons to the name a fresh
+    /// install would get (see `standard_path`).
+    RenameFile(App, PathBuf),
     /// Go back to the icon shipped inside the AppImage.
     ResetIcon(App),
     SyncMenu(Vec<App>),
@@ -153,6 +156,7 @@ impl Operation {
             Self::SetWebsite(a, _) => format!("Change {} website", a.name),
             Self::SetSource(a, _) => format!("Change {} update source", a.name),
             Self::SetIcon(a, _) => format!("Change {} icon", a.name),
+            Self::RenameFile(a, _) => format!("Give {} its standard file name", a.name),
             Self::ResetIcon(a) => format!("Use {} official icon", a.name),
             Self::SyncMenu(apps) if apps.len() == 1 => {
                 format!("Refresh {} menu entry", apps[0].name)
@@ -244,6 +248,11 @@ impl Operation {
                 Some(s) => format!("Check {} for updates with {} ({})", a.name, s.manager().label, s.summary()),
                 None => format!("Remove {}'s custom update source; embedded or Gear Lever information is used again", a.name),
             }],
+            Self::RenameFile(a, target) => vec![
+                format!("Rename {} to {}; a running instance keeps working", short(&a.path), short(target)),
+                format!("Rename the menu entry to {} and point it at the new file", short(&desktop_path(paths, target))),
+                format!("Rename its icons in {} to match", short(&a.path.parent().unwrap_or(Path::new("/")).join(".icons"))),
+            ],
             Self::SetIcon(a, file) => vec![
                 format!("Copy {} to {}", short(file), short(&custom_icon_path(&a.path, file))),
                 format!("Use it as the icon in {}; updates and menu refreshes keep it", short(&a.desktop_file)),
@@ -297,6 +306,29 @@ impl Operation {
             }
         })
     }
+}
+
+/// The name a fresh install of this app would get (`name.appimage`), when it
+/// differs from the current one and is free. None when the name is already
+/// standard, the app is outside the folder, its name is unknown, or the
+/// standard name belongs to another app (a "keep both" copy keeps its
+/// version on purpose then).
+pub fn standard_path(paths: &Paths, settings: &Settings, app: &App) -> Option<PathBuf> {
+    let meta = app.metadata.as_ref()?;
+    let name = meta.name.as_ref()?;
+    if app.external {
+        return None;
+    }
+    let plain = meta.terminal && settings.terminal_apps_use_executable_name;
+    let target = settings.folder(paths).join(format!(
+        "{}{}",
+        file_stem(name),
+        if plain { "" } else { ".appimage" }
+    ));
+    if target == app.path || target.exists() || desktop_path(paths, &target).exists() {
+        return None;
+    }
+    Some(target)
 }
 
 fn name_of(p: &Path) -> String {
@@ -1031,6 +1063,79 @@ fn run(
             store.entry(&app.path).update_source = s.clone();
             report.steps.push("Update source saved".into());
         }
+        Operation::RenameFile(app, target) => {
+            if target.exists() || desktop_path(paths, target).exists() {
+                return Err(format!(
+                    "{} is taken; nothing was renamed",
+                    target.display()
+                ));
+            }
+            let text = fs::read_to_string(&app.desktop_file)
+                .map_err(|e| format!("Cannot read {}: {e}", app.desktop_file.display()))?;
+            let mut text = text.replace(&*app.path.to_string_lossy(), &target.to_string_lossy());
+            fs::rename(&app.path, target)
+                .map_err(|e| format!("Cannot rename {}: {e}", app.path.display()))?;
+            report.changed.push(target.clone());
+            let old_stem = app
+                .path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let new_stem = target
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let icons = app.path.parent().unwrap_or(Path::new("/")).join(".icons");
+            let mut custom = store.get(&app.path).custom_icon;
+            for entry in fs::read_dir(&icons).into_iter().flatten().flatten() {
+                let old = entry.path();
+                let name = name_of(&old);
+                let rest = match name.strip_prefix(&old_stem) {
+                    Some(r) if r.is_empty() || r.starts_with('.') || r.starts_with("-custom") => {
+                        r.to_string()
+                    }
+                    _ => continue,
+                };
+                let new = icons.join(format!("{new_stem}{rest}"));
+                if new.exists() {
+                    continue;
+                }
+                if fs::rename(&old, &new).is_ok() {
+                    text = text.replace(&*old.to_string_lossy(), &new.to_string_lossy());
+                    if custom.as_deref() == Some(old.as_path()) {
+                        custom = Some(new.clone());
+                    }
+                    report.changed.push(new);
+                }
+            }
+            let new_desktop = desktop_path(paths, target);
+            backup_desktop(paths, &app.desktop_file, report);
+            write_atomic(&new_desktop, text.as_bytes(), 0o644)?;
+            report.changed.push(new_desktop.clone());
+            if new_desktop != app.desktop_file {
+                // Its content lives on in the new entry and in the backup.
+                fs::remove_file(&app.desktop_file)
+                    .map_err(|e| format!("Cannot remove the old menu entry: {e}"))?;
+                report.trashed.push(app.desktop_file.clone());
+            }
+            store.rename(&app.path, target);
+            store.entry(target).custom_icon = custom;
+            report.steps.push(format!(
+                "Renamed {} to {}",
+                paths.short(&app.path),
+                paths.short(target)
+            ));
+            if crate::library::running(std::slice::from_ref(app))
+                .is_ok_and(|r| r.contains_key(&app.id))
+            {
+                report.notes.push(format!(
+                    "{} keeps running from the renamed file; nothing needs a restart.",
+                    app.name
+                ));
+            }
+        }
         Operation::SetIcon(app, file) => {
             let data =
                 fs::read(file).map_err(|e| format!("Cannot read {}: {e}", file.display()))?;
@@ -1540,6 +1645,93 @@ mod tests {
         );
         let after = crate::library::load(&paths, &settings).apps[0].clone();
         assert!(after.menu_outdated.is_empty(), "{:?}", after.menu_outdated);
+    }
+
+    #[test]
+    fn a_versioned_file_name_is_renamed_to_the_standard_one_while_open() {
+        let (dir, paths, mut settings) = setup();
+        settings.move_on_integrate = false;
+        settings.keep_replaced_versions_in_trash = false;
+        let src = dir.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        // A second copy gets a versioned name; then the first goes away.
+        execute(
+            Operation::Integrate {
+                file: demo(&src, "a.AppImage", "1.0"),
+                conflict: Conflict::Ask,
+                replace: None,
+                source: None,
+            },
+            &paths,
+            &settings,
+            &Job::default(),
+        )
+        .unwrap();
+        execute(
+            Operation::Integrate {
+                file: demo(&src, "b.AppImage", "2.0"),
+                conflict: Conflict::KeepBoth,
+                replace: None,
+                source: None,
+            },
+            &paths,
+            &settings,
+            &Job::default(),
+        )
+        .unwrap();
+        let inv = crate::library::load(&paths, &settings);
+        let versioned = inv
+            .apps
+            .iter()
+            .find(|a| a.path.ends_with("demo_app_2_0.appimage"))
+            .unwrap()
+            .clone();
+        assert_eq!(
+            standard_path(&paths, &settings, &versioned),
+            None,
+            "standard name is taken"
+        );
+        let first = inv
+            .apps
+            .iter()
+            .find(|a| a.path.ends_with("demo_app.appimage"))
+            .unwrap()
+            .clone();
+        fs::remove_file(&first.path).unwrap();
+        fs::remove_file(&first.desktop_file).unwrap();
+        // As a real removal does: the first copy's icon goes too.
+        fs::remove_file(dir.path().join("AppImages/.icons/demo_app.png")).unwrap();
+        let mut open = fs::File::open(&versioned.path).unwrap();
+        let target = standard_path(&paths, &settings, &versioned).unwrap();
+        assert!(target.ends_with("AppImages/demo_app.appimage"));
+        let report = execute(
+            Operation::RenameFile(versioned.clone(), target.clone()),
+            &paths,
+            &settings,
+            &Job::default(),
+        )
+        .unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        let mut buf = Vec::new();
+        use std::io::Read;
+        open.read_to_end(&mut buf).unwrap();
+        assert!(!buf.is_empty());
+        assert!(!versioned.desktop_file.exists());
+        let d = DesktopFile::parse(
+            &fs::read_to_string(paths.applications().join("demo_app.desktop")).unwrap(),
+        );
+        assert_eq!(d.main("TryExec").unwrap(), target.to_string_lossy());
+        assert!(d.main("Exec").unwrap().contains(&*target.to_string_lossy()));
+        assert_eq!(
+            d.main("Icon").unwrap(),
+            dir.path()
+                .join("AppImages/.icons/demo_app.png")
+                .to_string_lossy()
+        );
+        let after = crate::library::load(&paths, &settings);
+        assert_eq!(after.apps.len(), 1);
+        assert_eq!(after.apps[0].path, target);
+        assert!(after.apps[0].standard_path.is_none());
     }
 
     #[test]

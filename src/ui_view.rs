@@ -483,6 +483,16 @@ impl App {
             "Use the image in the icon.path field as the icon",
             Message::SetIconFromField,
         ));
+        if let Some(t) = &a.standard_path {
+            list.push(g(
+                "app.rename-file",
+                format!(
+                    "Rename the file to its standard name {}",
+                    t.file_name().unwrap_or_default().to_string_lossy()
+                ),
+                Message::RenameFile(id.clone()),
+            ));
+        }
         if a.icon_custom {
             list.push(g(
                 "app.icon.reset",

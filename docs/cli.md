@@ -23,7 +23,7 @@ gearlever-cosmic-cli run --cmd 'app.requirements={"app":"vscodium"}'
 
 An app is named by its id (the menu entry's file name without `.desktop`, from `app.list`), its AppImage path, its menu entry path, or its exact name. Ambiguous names are refused with the matching ids. Unknown commands, fields or wrong types are errors; schemas and examples come from the same Rust types that parse requests.
 
-`app.list` returns, per app, `version` (read from the AppImage file now), `menu_version` (what the menu entry says), `menu_outdated` (`version`, `name`, `file`), `changed_since_sync`, `running` (`pids`, `old_version` when a replaced file still runs), the update source and its origin, and `managed_by` (`gear_lever_cosmic`, `gear_lever`, `other`). Its `summary` names the folder and how many menu entries were scanned, so an empty list is distinguishable from a scan that found nothing.
+`app.list` returns, per app, `version` (read from the AppImage file now), `menu_version` (what the menu entry says), `menu_outdated` (`version`, `name`, `file`), `changed_since_sync`, `running` (`pids`, `old_version` when a replaced file still runs), the update source and its origin, `managed_by` (`gear_lever_cosmic`, `gear_lever`, `other`), and `standard_path` when the file in the AppImages folder still carries a version or other non-standard name; `app.rename-file` renames it (with its menu entry and icons) to that path, also while the app runs. Its `summary` names the folder and how many menu entries were scanned, so an empty list is distinguishable from a scan that found nothing.
 
 ## Plan and apply
 

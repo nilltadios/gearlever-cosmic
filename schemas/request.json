@@ -710,6 +710,23 @@
       "additionalProperties": false,
       "properties": {
         "command": {
+          "const": "app.rename-file",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/Target"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
           "const": "app.set-icon",
           "type": "string"
         },
