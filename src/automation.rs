@@ -1058,14 +1058,15 @@ pub fn run_request(request: &Request, ctx: &Context, policy: &Policy, job: &Job)
 /// Start an integrated app the way the app menu would. A launch that fails
 /// right away (for example missing FUSE) is reported with its output.
 pub fn launch_app(app: &App) -> std::result::Result<(), String> {
-    let mut child = crate::host::launch_desktop_file(&app.desktop_file)?;
+    let stem = app.desktop_file.file_stem().unwrap_or_default();
+    let log = crate::host::launch_log(&stem.to_string_lossy());
+    let mut child = crate::host::launch_desktop_file(&app.desktop_file, log.as_deref())?;
     let status = child.wait().map_err(|e| e.to_string())?;
     if !status.success() {
-        let mut err = String::new();
-        if let Some(mut s) = child.stderr.take() {
-            use std::io::Read;
-            let _ = s.read_to_string(&mut err);
-        }
+        let err = log
+            .as_deref()
+            .and_then(|p| fs::read_to_string(p).ok())
+            .unwrap_or_default();
         if err.contains("FUSE") || err.contains("fuse") {
             return Err(format!(
                 "{} needs FUSE to run. Install fuse2 (libfuse.so.2), or add --appimage-extract-and-run to its arguments. Details: {}",

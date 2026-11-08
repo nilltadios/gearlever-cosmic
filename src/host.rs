@@ -100,28 +100,66 @@ pub fn open(target: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The log a launched app writes its output to:
+/// `<data>/launch-logs/<name>.log`, emptied on every launch.
+///
+/// The launcher (`gio`, `setsid`) hands its stdout and stderr to the app, which
+/// keeps them after the launcher exits. Pipes would close as soon as this
+/// process stops reading them, and the app's next write would kill it
+/// (SIGPIPE) or fail with EPIPE. Electron apps ignore SIGPIPE, so a backend
+/// process that logs to stdout exits and the window waits for it forever.
+/// A file stays writable for as long as the app runs.
+pub fn launch_log(name: &str) -> Option<PathBuf> {
+    let dir = crate::paths::Paths::discover()
+        .ok()?
+        .data
+        .join("launch-logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(format!("{name}.log")))
+}
+
+/// stdout and stderr for a launched app: the log file, or /dev/null without one.
+fn launch_output(log: Option<&Path>) -> (Stdio, Stdio) {
+    let file = log.and_then(|p| std::fs::File::create(p).ok());
+    match file.and_then(|f| f.try_clone().ok().map(|g| (f, g))) {
+        Some((out, err)) => (out.into(), err.into()),
+        None => (Stdio::null(), Stdio::null()),
+    }
+}
+
 /// Start an integrated app through its menu entry, the way the app menu does.
 /// GIO handles Exec field codes, environment prefixes and Terminal=true.
-pub fn launch_desktop_file(desktop_file: &Path) -> Result<std::process::Child, String> {
+/// The app's output goes to `log` (see [`launch_log`]), never to a pipe.
+pub fn launch_desktop_file(
+    desktop_file: &Path,
+    log: Option<&Path>,
+) -> Result<std::process::Child, String> {
+    let (out, err) = launch_output(log);
     command("gio")
         .arg("launch")
         .arg(desktop_file)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(out)
+        .stderr(err)
         .spawn()
         .map_err(|e| format!("Cannot start {}: {e}", desktop_file.display()))
 }
 
 /// Start an AppImage that has no menu entry yet, detached from this process.
-pub fn launch_file(file: &Path, args: &[String]) -> Result<std::process::Child, String> {
+/// The app's output goes to `log` (see [`launch_log`]), never to a pipe.
+pub fn launch_file(
+    file: &Path,
+    args: &[String],
+    log: Option<&Path>,
+) -> Result<std::process::Child, String> {
+    let (out, err) = launch_output(log);
     command("setsid")
         .arg("--fork")
         .arg(file)
         .args(args)
         .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(out)
+        .stderr(err)
         .spawn()
         .map_err(|e| format!("Cannot start {}: {e}", file.display()))
 }
@@ -216,6 +254,37 @@ pub fn parse_ps(text: &str) -> Vec<(u32, PathBuf)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A launched app keeps writing after its launcher exits. With the old
+    /// piped stdio this grandchild was killed by SIGPIPE on its first write.
+    #[test]
+    fn launched_app_output_outlives_the_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("app.log");
+        let (out, err) = launch_output(Some(&log));
+        let status = Command::new("sh")
+            .args(["-c", "(sleep 0.3; echo late; echo oops >&2) &"])
+            .stdin(Stdio::null())
+            .stdout(out)
+            .stderr(err)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::thread::sleep(std::time::Duration::from_millis(800));
+        let text = std::fs::read_to_string(&log).unwrap();
+        assert!(text.contains("late") && text.contains("oops"), "{text:?}");
+    }
+
+    #[test]
+    fn launch_output_without_a_log_is_null() {
+        let (out, _) = launch_output(Some(Path::new("/nonexistent/dir/x.log")));
+        let status = Command::new("sh")
+            .args(["-c", "echo x"])
+            .stdout(out)
+            .status();
+        assert!(status.unwrap().success());
+    }
+
     #[test]
     fn host_bridge_keeps_arguments_separate() {
         let mut cmd = command_for("gio", true);

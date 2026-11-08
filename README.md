@@ -34,7 +34,7 @@ GearLever_COSMIC-x86_64.AppImage cli --list-updates --all-statuses
 
 ```sh
 cargo run --locked --bin gearlever-cosmic
-packaging/build-appimage.sh            # AppImage from target/release (needs patchelf, strace)
+packaging/build-appimage.sh            # AppImage from target/release, on any glibc distro (needs patchelf, binutils)
 packaging/container-build.sh           # the same inside Ubuntu 26.04 (podman or docker)
 ```
 

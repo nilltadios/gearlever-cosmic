@@ -11,13 +11,70 @@
 # checks the sharun, appimagetool (uruntime) and onelf it downloads.
 # To move to the newest quick-sharun, update QS_COMMIT and QS_SHA (see
 # docs/development.md, "Updating the AppImage tooling").
+#
+# Runs on any glibc distribution (Arch, Fedora, Debian/Ubuntu, openSUSE ...),
+# or in packaging/Containerfile via packaging/container-build.sh, which is
+# how releases are built. Override LIB_DIR if library detection picks the
+# wrong folder.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 QS_COMMIT=1a5594c7f47ec5cb46ce70f6e11b5c5781f17f5f
 QS_SHA=35ba7b95f91f4665707c4cab5ed99407ceea636c15675990bb42816d6d84cc33
 bin="$(realpath "${1:-target/release}")"
 out="$(realpath -m "${2:-dist}")"
-version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["package"]["version"])')
+
+# Every tool this script and quick-sharun need, checked before any work so a
+# missing one is reported with the install command for this distribution.
+# tool:package names for dnf, apt, pacman, zypper (when they differ).
+need=(awk cp curl env find grep install ldd mktemp mv patchelf rm sed sha256sum sleep strings tar tr)
+missing=()
+for t in "${need[@]}"; do command -v "$t" >/dev/null || missing+=("$t"); done
+if ((${#missing[@]})); then
+  pkgs=()
+  for t in "${missing[@]}"; do
+    case $t in
+      strings) pkgs+=(binutils) ;;
+      ldd) pkgs+=(glibc-common) ;; # Debian/Ubuntu: libc-bin; Arch: glibc
+      sha256sum|install|mktemp|cp|mv|rm|env|tr|sleep) pkgs+=(coreutils) ;;
+      awk) pkgs+=(gawk) ;;
+      find) pkgs+=(findutils) ;;
+      *) pkgs+=("$t") ;;
+    esac
+  done
+  # shellcheck disable=SC1091
+  . /etc/os-release 2>/dev/null || true
+  case " ${ID:-} ${ID_LIKE:-} " in
+    *" fedora "*|*" rhel "*) cmd="sudo dnf install" ;;
+    *" debian "*|*" ubuntu "*) cmd="sudo apt install"; pkgs=("${pkgs[@]/glibc-common/libc-bin}") ;;
+    *" arch "*) cmd="sudo pacman -S --needed"; pkgs=("${pkgs[@]/glibc-common/glibc}") ;;
+    *" suse "*|*" opensuse "*) cmd="sudo zypper install"; pkgs=("${pkgs[@]/glibc-common/glibc}") ;;
+    *) cmd="install with your package manager:" ;;
+  esac
+  echo "Missing tools: ${missing[*]}" >&2
+  echo "  $cmd $(printf '%s\n' "${pkgs[@]}" | sort -u | tr '\n' ' ')" >&2
+  echo "  or build in a container: packaging/container-build.sh" >&2
+  exit 1
+fi
+for b in gearlever-cosmic gearlever-cosmic-cli; do
+  [[ -x $bin/$b ]] || { echo "$bin/$b is missing: run cargo build --locked --release --bins first" >&2; exit 1; }
+done
+
+# quick-sharun looks for libc only in /usr/lib/<arch>-linux-gnu and /usr/lib
+# (Debian and Arch layouts). Elsewhere (/usr/lib64 on Fedora and openSUSE)
+# use the folder the built binary really loads libc from.
+if [[ -z ${LIB_DIR:-} ]]; then
+  libc=$(ldd "$bin/gearlever-cosmic" | awk '$1 ~ /^libc\.so/ {print $3; exit}')
+  [[ -n $libc && -e $libc ]] || { echo "Cannot find the libc $bin/gearlever-cosmic uses; set LIB_DIR" >&2; exit 1; }
+  LIB_DIR=$(dirname -- "$(realpath -- "$libc")")
+  # /lib64 is a link to /usr/lib64 on merged-/usr systems; keep the /usr path.
+  [[ -d /usr$LIB_DIR && $LIB_DIR != /usr/* ]] && LIB_DIR=/usr$LIB_DIR
+fi
+export LIB_DIR
+echo "Libraries from $LIB_DIR"
+
+# The [package] version, read without Python's tomllib (3.11+).
+version=$(awk -F'"' '/^\[/{p=($0=="[package]")} p && /^version *=/{print $2; exit}' Cargo.toml)
+[[ -n $version ]] || { echo "Cannot read the version from Cargo.toml" >&2; exit 1; }
 app=dev.nilltadios.GearLeverCosmic
 cache="$PWD/packaging/cache"
 mkdir -p "$cache" "$out"
@@ -60,6 +117,12 @@ export DEPLOY_VULKAN=0 DEPLOY_OPENGL=0
 # No strace run: it would also pick up the GPU drivers (Mesa + LLVM) the
 # test launch happened to load.
 export STRACE_MODE=0
+# No /usr/share guessing: quick-sharun otherwise copies every /usr/share
+# folder whose name appears as a word in the binary, so the result depended
+# on what the build machine had installed (149 MB of ibus dictionaries on a
+# Fedora desktop; dict and menu even in the container). The app's own data
+# (icons, metainfo, docs) is added explicitly below.
+export DEPLOY_DATADIR=0
 # If quick-sharun starts the app for any check, it must never act on the
 # builder's real files: isolated mode and a throwaway home.
 export GEARLEVER_COSMIC_UI_ISOLATED=1

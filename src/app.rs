@@ -3074,7 +3074,11 @@ impl cosmic::Application for App {
                                     &path,
                                     std::fs::Permissions::from_mode(0o755),
                                 );
-                                gearlever_cosmic::host::launch_file(&path, &args).map(|_| ())
+                                let stem = path.file_stem().unwrap_or_default();
+                                let log =
+                                    gearlever_cosmic::host::launch_log(&stem.to_string_lossy());
+                                gearlever_cosmic::host::launch_file(&path, &args, log.as_deref())
+                                    .map(|_| ())
                             },
                             Message::Launched,
                         ),
