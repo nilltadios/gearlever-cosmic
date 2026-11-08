@@ -35,4 +35,4 @@ Run before reporting a change: `cargo fmt --all --check`, `cargo clippy --all-ta
 
 ## Releases
 
-Every push to `main` builds the AppImage; a GitHub release is created when the version in `Cargo.toml` has no release yet. Before pushing a change that ships, bump `version` in `Cargo.toml` and add a `<release>` to `resources/dev.nilltadios.GearLeverCosmic.metainfo.xml`. Commits carry no AI attribution or co-author trailers. Pushing and publishing need the person's explicit approval.
+Every push to `main` builds the AppImage; a GitHub release is created when the version in `Cargo.toml` has no release yet. Before pushing a change that ships, bump `version` in `Cargo.toml` and add a `<release>` to `resources/dev.nilltadios.GearLeverCosmic.metainfo.xml`. `verification/check-release-bump.sh` fails when shipped files changed under an already released version, and the project's Claude Code hook (`.claude/settings.json`) runs it before every `git push`. Commits carry no AI attribution or co-author trailers. Pushing and publishing need the person's explicit approval.
