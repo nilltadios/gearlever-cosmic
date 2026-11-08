@@ -108,6 +108,13 @@ ok "remove asked first, needed --apply, and moved files to the Trash; render 5-r
 
 ui activate header.settings >/dev/null
 ui capture "$out/6-settings.png" >/dev/null
+# The CLI-on-PATH switch: needs --apply, creates the link, and turns it off again.
+ui activate settings.cli-link 2>/dev/null && fail "settings.cli-link must require --apply"
+ui activate settings.cli-link --apply >/dev/null; sleep 0.3; ui wait >/dev/null
+[[ -L $H/.local/bin/gearlever-cosmic-cli ]] && "$H/.local/bin/gearlever-cosmic-cli" --version >/dev/null || fail "settings.cli-link on"
+ui activate settings.cli-link --apply >/dev/null; sleep 0.3; ui wait >/dev/null
+[[ ! -L $H/.local/bin/gearlever-cosmic-cli ]] || fail "settings.cli-link off"
+ok "the Settings switch puts gearlever-cosmic-cli on PATH and takes it off"
 ui activate settings.close >/dev/null
 # Narrow layout: a separate capture instance at the minimum width (live
 # resizes depend on the compositor). It exits after saving its render.

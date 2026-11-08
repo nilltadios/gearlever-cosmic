@@ -69,6 +69,8 @@ pub enum Operation {
     SyncMenu(Vec<App>),
     ImportGearLever(Vec<(App, Option<Source>, Option<String>)>),
     Settings(Box<Settings>),
+    /// Create (Some target) or remove (None) ~/.local/bin/gearlever-cosmic-cli.
+    CliLink(Option<PathBuf>),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -109,7 +111,7 @@ impl Job {
     }
 }
 
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, JsonSchema)]
 pub struct Report {
     pub title: String,
     pub started: u64,
@@ -164,6 +166,8 @@ impl Operation {
             Self::SyncMenu(apps) => format!("Refresh {} menu entries", apps.len()),
             Self::ImportGearLever(list) => format!("Import {} Gear Lever settings", list.len()),
             Self::Settings(_) => "Change settings".into(),
+            Self::CliLink(Some(_)) => "Put gearlever-cosmic-cli on PATH".into(),
+            Self::CliLink(None) => "Remove gearlever-cosmic-cli from PATH".into(),
         }
     }
     /// Human-readable effects, with exact paths, for dry-run plans and dialogs.
@@ -193,6 +197,13 @@ impl Operation {
                 }
                 if let Some(s) = source {
                     out.push(format!("Set the update source to {} ({})", s.manager().label, s.summary()));
+                }
+                if let Some(note) = flatpak_note(paths, &meta) {
+                    out.push(format!("Note: {note}"));
+                }
+                if is_self(&meta) && *conflict != Conflict::Replace && !crate::cli_link::status(paths).exists {
+                    let target = target_path(paths, settings, &meta, *conflict)?;
+                    out.extend(crate::cli_link::plan(paths, true, Some(&target))?);
                 }
                 out
             }
@@ -281,6 +292,7 @@ impl Operation {
                     format!("Save Gear Lever's {} for {}", parts.join(" and "), a.name)
                 })
                 .collect(),
+            Self::CliLink(target) => crate::cli_link::plan(paths, target.is_some(), target.as_deref())?,
             Self::Settings(s) => {
                 let old = serde_json::to_value(settings).unwrap_or_default();
                 let new = serde_json::to_value(s.as_ref()).unwrap_or_default();
@@ -936,6 +948,19 @@ fn run(
                     meta.name.as_deref().unwrap_or("the app"),
                     paths.short(&target)
                 ));
+                if let Some(note) = flatpak_note(paths, &meta) {
+                    report.notes.push(note);
+                }
+                // Gear Lever COSMIC adding itself: also put its CLI on PATH,
+                // unless that name is already in use.
+                if is_self(&meta)
+                    && !crate::cli_link::status(paths).exists
+                    && let Err(e) = crate::cli_link::apply(paths, true, Some(&target), report)
+                {
+                    report
+                        .notes
+                        .push(format!("The CLI was not put on PATH: {e}"));
+                }
             }
         }
         Operation::Update {
@@ -1215,6 +1240,9 @@ fn run(
                     .push(format!("Imported Gear Lever settings for {}", app.name));
             }
         }
+        Operation::CliLink(target) => {
+            crate::cli_link::apply(paths, target.is_some(), target.as_deref(), report)?;
+        }
         Operation::Settings(new) => {
             if new.check_updates_on_startup != settings.check_updates_on_startup {
                 autostart(paths, new.check_updates_on_startup, report)?;
@@ -1226,6 +1254,23 @@ fn run(
     }
     store.save(paths)?;
     Ok(())
+}
+
+/// "X is also installed as the Flatpak Y …" when the AppImage duplicates an
+/// installed Flatpak, for integrate plans, reports and the Add page.
+/// The AppImage is Gear Lever COSMIC itself.
+fn is_self(meta: &Metadata) -> bool {
+    meta.name.as_deref() == Some("Gear Lever COSMIC")
+}
+
+pub fn flatpak_note(paths: &Paths, meta: &Metadata) -> Option<String> {
+    let flatpaks = crate::flatpak::installed(paths);
+    let empty = crate::desktop::DesktopFile::parse("");
+    let id = crate::library::flatpak_duplicate(&flatpaks, Some(meta), &empty, None)?;
+    Some(format!(
+        "{} is also installed as the Flatpak {id}; the app menu will show both. Remove one to keep a single entry.",
+        meta.name.as_deref().unwrap_or("This app")
+    ))
 }
 
 fn trash_original(file: &Path, report: &mut Report) {

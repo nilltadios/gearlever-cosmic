@@ -562,6 +562,18 @@ impl App {
                 Message::Setting(f(!on)),
             ));
         }
+        let link = gearlever_cosmic::cli_link::status(&self.paths);
+        if !link.exists || link.ours {
+            let on = link.ours && link.works;
+            list.push(g(
+                "settings.cli-link",
+                format!(
+                    "Put gearlever-cosmic-cli on PATH (~/.local/bin): turn {}",
+                    if on { "off" } else { "on" }
+                ),
+                Message::CliLink(!on),
+            ));
+        }
         list.push(g(
             "settings.move",
             "Move files into the folder when adding",

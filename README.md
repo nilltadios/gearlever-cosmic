@@ -23,9 +23,9 @@ Nothing is deleted permanently: removed AppImages, menu entries and icons go to 
 ## Command line and AI agents
 
 ```sh
-GearLever_COSMIC-x86_64.AppImage cli guide
-GearLever_COSMIC-x86_64.AppImage cli run --cmd 'update.check={}'
-GearLever_COSMIC-x86_64.AppImage cli --list-updates --all-statuses
+./GearLever_COSMIC-*-x86_64.AppImage cli guide
+./GearLever_COSMIC-*-x86_64.AppImage cli run --cmd 'update.check={}'
+./GearLever_COSMIC-*-x86_64.AppImage cli --list-updates --all-statuses
 ```
 
 `guide` is the starting point. Changes are dry-run plans until `--apply`. Gear Lever's own options (`--integrate`, `--update`, `--list-updates --json`, …) work too. The open window can be inspected and operated with `cli ui …`. See the [CLI guide](docs/cli.md), the [agent workflow](docs/agents.md), [live window controls](docs/ui-cli.md) and [how updates work](docs/updates.md).

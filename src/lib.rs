@@ -2,8 +2,10 @@
 //! Shared AppImage backend used by both the GUI and the headless CLI.
 pub mod appimage;
 pub mod automation;
+pub mod cli_link;
 pub mod desktop;
 pub mod elf;
+pub mod flatpak;
 pub mod host;
 pub mod library;
 pub mod ops;
@@ -91,7 +93,10 @@ pub fn shell_quote(word: &str) -> String {
 
 /// Bundled text with the CLI's name replaced by [`cli_command`].
 pub fn with_cli_command(text: &str) -> String {
-    let command = cli_command();
+    replace_cli_command(text, &cli_command())
+}
+
+fn replace_cli_command(text: &str, command: &str) -> String {
     if command == "gearlever-cosmic-cli" {
         return text.into();
     }
@@ -111,6 +116,27 @@ mod tests {
             "/home/me/AppImages/gear_lever_cosmic.appimage"
         );
         assert_eq!(super::shell_quote("/a b/it's"), "'/a b/it'\\''s'");
+    }
+
+    /// The guide and bundled docs show the command that really starts the
+    /// CLI. Release files are named GearLever_COSMIC-VERSION-x86_64.AppImage
+    /// and users rename them, so no text may name one fixed file.
+    #[test]
+    fn bundled_texts_name_the_real_cli_command() {
+        let guide = include_str!("guide.txt");
+        let appimage = "/home/me/AppImages/gear_lever_cosmic.appimage cli";
+        let shown = super::replace_cli_command(guide, appimage);
+        assert!(shown.contains(&format!("Run every command as:  {appimage} ...")));
+        assert!(shown.starts_with("Gear Lever COSMIC: agent guide"));
+        assert!(shown.contains(&format!("{appimage} manages AppImages")));
+        let texts =
+            std::iter::once(guide).chain(crate::automation::DOCS.iter().map(|(.., text)| *text));
+        for text in texts {
+            assert!(
+                !text.contains("GearLever_COSMIC-x86_64.AppImage"),
+                "a bundled text names a fixed AppImage file"
+            );
+        }
     }
 
     #[test]

@@ -97,6 +97,8 @@ pub struct Pending {
     pub same_file: Option<String>,
     pub others: Vec<(String, Option<String>)>,
     pub hashes: Option<Result<Hashes, String>>,
+    /// Shown when the same app is installed as a Flatpak.
+    pub flatpak_note: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +177,8 @@ pub enum Message {
     PendingHashes(usize),
     Verified(bool),
     Setting(SettingChange),
+    /// Turn ~/.local/bin/gearlever-cosmic-cli on or off.
+    CliLink(bool),
     ChooseFolder,
     FolderPicked(Result<PathBuf, String>),
     ImportGearLever,
@@ -740,6 +744,7 @@ impl App {
                 same_file: None,
                 others: vec![],
                 hashes: None,
+                flatpak_note: None,
             });
             let (paths, settings, inv) = (
                 self.paths.clone(),
@@ -752,6 +757,10 @@ impl App {
                     let requirements =
                         requirements::check(&file, &requirements::System::host()).ok();
                     let same_file = ops::same_file(&inv, &file).map(|a| a.id);
+                    let flatpak_note = meta
+                        .as_ref()
+                        .ok()
+                        .and_then(|m| ops::flatpak_note(&paths, m));
                     let others = meta
                         .as_ref()
                         .map(|m| {
@@ -771,6 +780,7 @@ impl App {
                             same_file,
                             others,
                             hashes: None,
+                            flatpak_note,
                         },
                     )
                 },
@@ -898,6 +908,9 @@ impl App {
         }
         if self.running.contains_key(&a.id) {
             badges = badges.push(pill("Running".into()));
+        }
+        if a.flatpak.is_some() {
+            badges = badges.push(pill("Also a Flatpak".into()));
         }
         if !a.menu_outdated.is_empty() {
             badges = badges.push(pill("Menu outdated".into()));
@@ -1279,6 +1292,16 @@ impl App {
                     ),
                 ),
             );
+        }
+        if let Some(f) = &a.flatpak {
+            col = col.push(self.banner(
+                "dialog-information-symbolic",
+                format!(
+                    "{} is also installed as the Flatpak {f}, so the app menu shows it twice. Remove one of them to keep a single entry.",
+                    a.name
+                ),
+                None,
+            ));
         }
         if a.arch != gearlever_cosmic::elf::host_arch() && a.arch != "unknown" {
             col = col.push(self.banner(
@@ -1764,6 +1787,9 @@ impl App {
                 format!("Requirements met: {}.", runtime_text(r))
             }));
         }
+        if let Some(note) = &p.flatpak_note {
+            col = col.push(wrap(note.clone()));
+        }
         let mut facts = vec![];
         if meta.update_info.is_some() {
             facts.push("includes update information from its developer".to_string());
@@ -2174,11 +2200,26 @@ impl cosmic::Application for App {
             .title("Gear Lever")
             .add(widget::settings::item::builder("Import Gear Lever's update sources").description(format!("{} saved sources found; {importable} are used for apps here until you import or replace them. Gear Lever's files are only read.", gl.values().filter(|g| g.source.is_some()).count())).control(widget::button::standard("Import").id(widget::Id::new("settings.import")).on_press_maybe((importable > 0 && !self.busy()).then_some(Message::ImportGearLever))))
             .add(widget::settings::item::builder("Debug logs").description("More detailed logs on the terminal").toggler(s.debug_logs, set(SettingChange::DebugLogs)));
-        let content = widget::column::with_capacity(5)
+        let link = gearlever_cosmic::cli_link::status(&self.paths);
+        let cli = widget::settings::section()
+            .title("Command line")
+            .add(
+                widget::settings::item::builder("Put gearlever-cosmic-cli on PATH")
+                    .description(if link.exists && !link.ours {
+                        "~/.local/bin/gearlever-cosmic-cli is used by something else and is left alone".to_string()
+                    } else if link.ours && !link.on_path {
+                        "Linked in ~/.local/bin, which is not on PATH: add it to PATH to use the bare name".to_string()
+                    } else {
+                        "A link in ~/.local/bin, so scripts and AI agents find the CLI (gearlever-cosmic-cli guide)".to_string()
+                    })
+                    .toggler(link.ours && link.works, Message::CliLink),
+            );
+        let content = widget::column::with_capacity(6)
             .spacing(16)
             .push(general)
             .push(files)
             .push(updates)
+            .push(cli)
             .push(appearance)
             .push(migrate);
         Some(
@@ -3104,6 +3145,20 @@ impl cosmic::Application for App {
             }
             Message::Verified(v) => self.verified = v,
             Message::Setting(c) => return self.change_setting(c),
+            Message::CliLink(on) => {
+                let target = if on {
+                    match gearlever_cosmic::cli_link::default_target() {
+                        Some(t) => Some(t),
+                        None => {
+                            self.notice = Some("There is no CLI binary to link here. In the Flatpak, run flatpak run --command=gearlever-cosmic-cli dev.nilltadios.GearLeverCosmic.".into());
+                            return Task::none();
+                        }
+                    }
+                } else {
+                    None
+                };
+                return self.run_ops(vec![Operation::CliLink(target)]);
+            }
             Message::ChooseFolder => {
                 return cosmic::task::future(async move {
                     let r = cosmic::dialog::file_chooser::open::Dialog::new()

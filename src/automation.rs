@@ -91,6 +91,8 @@ enum Action {
     },
     /// Gear Lever: update an integrated AppImage, or --all (-y applies). Running apps are updated in place.
     Update {
+        /// The app: id, name, AppImage path or menu entry.
+        #[arg(value_name = "APP")]
         file: Option<PathBuf>,
         #[arg(long)]
         all: bool,
@@ -102,6 +104,8 @@ enum Action {
     },
     /// Gear Lever: move an AppImage, its menu entry and icon to the Trash (-y applies).
     Remove {
+        /// The app: id, name, AppImage path or menu entry.
+        #[arg(value_name = "APP")]
         file: PathBuf,
         /// Not supported: removal always uses the Trash.
         #[arg(long)]
@@ -123,8 +127,10 @@ enum Action {
     },
     /// Gear Lever: list update managers and their fields.
     ListUpdateManagers,
-    /// Gear Lever: set (or --unset) an app's update source: FILE --manager NAME KEY=VALUE... (-y applies).
+    /// Gear Lever: set (or --unset) an app's update source: APP --manager NAME KEY=VALUE... (-y applies).
     SetUpdateSource {
+        /// The app: id, name, AppImage path or menu entry.
+        #[arg(value_name = "APP")]
         file: PathBuf,
         #[arg(long)]
         manager: Option<String>,
@@ -151,6 +157,13 @@ pub struct AppList {
     /// Only apps whose menu entry no longer matches the file.
     #[serde(default)]
     pub outdated_menu: bool,
+}
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CliLink {
+    /// true: link ~/.local/bin/gearlever-cosmic-cli to this AppImage (or the
+    /// native CLI). false: move the link to the Trash.
+    pub enabled: bool,
 }
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -300,6 +313,8 @@ pub enum Request {
     SetSource(SetSource),
     #[serde(rename = "settings.set")]
     SettingsSet(SettingsSet),
+    #[serde(rename = "cli.link")]
+    CliLink(CliLink),
     #[serde(rename = "gearlever.import")]
     GearLeverImport(Targets),
     #[serde(rename = "app.launch")]
@@ -490,6 +505,12 @@ pub fn catalog() -> Vec<Value> {
             "Change settings (only the given keys).",
             true,
             json!({"settings":{"keep_replaced_versions_in_trash":true}}),
+        ),
+        entry::<CliLink>(
+            "cli.link",
+            "Put the CLI on PATH as ~/.local/bin/gearlever-cosmic-cli (a link to this AppImage or the native CLI), or remove that link. A file of that name that is not a link to Gear Lever COSMIC is never replaced. settings.get shows the link as cli_link. Gear Lever COSMIC creates it when it adds itself to the app menu.",
+            true,
+            json!({"enabled":true}),
         ),
         entry::<Targets>(
             "gearlever.import",
@@ -831,6 +852,16 @@ pub fn prepare(
                 p.source.clone(),
             )]
         }
+        Request::CliLink(p) => {
+            let target = if p.enabled {
+                Some(crate::cli_link::default_target().ok_or_else(|| {
+                    invalid("No CLI to link: in the Flatpak use flatpak run --command=gearlever-cosmic-cli dev.nilltadios.GearLeverCosmic")
+                })?)
+            } else {
+                None
+            };
+            vec![Operation::CliLink(target)]
+        }
         Request::SettingsSet(p) => {
             let mut value = serde_json::to_value(&ctx.settings).unwrap_or_default();
             for (k, v) in &p.settings {
@@ -966,7 +997,11 @@ pub fn run_request(request: &Request, ctx: &Context, policy: &Policy, job: &Job)
             Some(json!(crate::requirements::check(&file, &crate::requirements::System::host()).map_err(invalid)?))
         }
         Request::Managers(_) => Some(json!(updates::MANAGERS.iter().map(|m| json!({"name":m.name,"label":m.label,"fields":m.fields.iter().map(|(f, d)| json!({"name":f,"description":d})).collect::<Vec<_>>()})).collect::<Vec<_>>())),
-        Request::SettingsGet(_) => Some(settings_doc(&ctx.settings)),
+        Request::SettingsGet(_) => {
+            let mut doc = settings_doc(&ctx.settings);
+            doc["cli_link"] = json!(crate::cli_link::status(&ctx.paths));
+            Some(doc)
+        }
         Request::GearLeverList(_) => Some(json!({
             "configs": ctx.paths.gearlever_configs().iter().filter(|p| p.is_file()).collect::<Vec<_>>(),
             "apps": inv.apps.iter().filter_map(|a| store::gearlever_for(&ctx.paths, &a.path).map(|g| json!({"app":a.id,"gearlever":g}))).collect::<Vec<_>>()})),
@@ -1235,12 +1270,20 @@ fn compat(action: Action) -> Result<Value> {
             Err(e) => Err(e),
         }
     };
-    let app_for = |file: &Path| -> Result<String> {
+    // APP as `run` takes it: id, exact name, AppImage path or menu entry.
+    // A relative file path is also tried from the current folder. On failure
+    // the error names what was typed and lists the known ids.
+    let app_for = |target: &Path| -> Result<String> {
         let inv = ctx.inventory();
-        let abs = std::path::absolute(file).map_err(|e| invalid(e.to_string()))?;
+        let typed = inv.find(&target.to_string_lossy());
+        if let Ok(a) = typed {
+            return Ok(a.id.clone());
+        }
+        let abs = std::path::absolute(target).map_err(|e| invalid(e.to_string()))?;
         inv.find(&abs.to_string_lossy())
             .map(|a| a.id.clone())
-            .map_err(|_| not_found(format!("{} is not integrated", file.display())))
+            .or_else(|_| typed.map(|a| a.id.clone()))
+            .map_err(not_found)
     };
     match action {
         Action::Integrate {
@@ -1327,12 +1370,11 @@ fn compat(action: Action) -> Result<Value> {
                             a.menu_version.as_deref().unwrap_or("none")
                         ));
                     }
-                    vec![
-                        a.name.clone(),
-                        v,
-                        format!("[{src}]"),
-                        a.path.display().to_string(),
-                    ]
+                    let mut src = format!("[{src}]");
+                    if let Some(f) = &a.flatpak {
+                        src.push_str(&format!(" [also Flatpak {f}]"));
+                    }
+                    vec![a.name.clone(), v, src, a.path.display().to_string()]
                 })
                 .collect();
             if rows.is_empty() {

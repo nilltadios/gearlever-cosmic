@@ -98,9 +98,38 @@ v=$(GEARLEVER_COSMIC_SYSTEM_ROOT="$root" run --cmd 'app.requirements={"app":"old
 [[ $v == "('missing', 'fuse2')" ]] || fail "fuse2 app on fuse3-only system: $v"
 ok "a FUSE 2 AppImage is reported as missing libfuse.so.2 on a fuse3-only system"
 
+# An AppImage that is also installed as a Flatpak is flagged (menu shows it twice).
+fp="$H/.local/share/flatpak/exports/share/applications"; mkdir -p "$fp"
+printf '[Desktop Entry]\nName=Sky Notes\nExec=flatpak run org.example.SkyNotes\n' > "$fp/org.example.SkyNotes.desktop"
+f=$(run --cmd 'app.list={}' | jq_py '[(a["id"], a["flatpak"]) for a in d["results"][0]["data"]["apps"] if a["flatpak"]]')
+[[ $f == *"org.example.SkyNotes"* && $f != *"demo_editor"* ]] || fail "flatpak duplicate: $f"
+"$cli" --list-installed | grep -q 'Sky Notes.*\[also Flatpak org.example.SkyNotes\]' || fail "--list-installed flatpak marker"
+rm "$fp/org.example.SkyNotes.desktop"
+ok "an AppImage also installed as a Flatpak is flagged ($f)"
+
+# cli.link puts the CLI on PATH as ~/.local/bin/gearlever-cosmic-cli, and only touches its own link.
+link="$H/.local/bin/gearlever-cosmic-cli"
+run --cmd 'cli.link={"enabled":true}' | grep -q "Create the link" || fail "cli.link plan"
+[[ ! -e $link ]] || fail "cli.link plan changed files"
+run --apply --cmd 'cli.link={"enabled":true}' >/dev/null
+[[ -L $link ]] && "$link" --version | grep -q '^gearlever-cosmic-cli ' || fail "cli.link: the link must start the CLI"
+[[ $(run --cmd 'settings.get={}' | jq_py 'd["results"][0]["data"]["cli_link"]["ours"]') == True ]] || fail "settings.get cli_link"
+run --apply --cmd 'cli.link={"enabled":false}' >/dev/null
+[[ ! -e $link && ! -L $link ]] || fail "cli.link off must move the link to the Trash"
+printf '#!/bin/sh\n' > "$link"
+run --cmd 'cli.link={"enabled":true}' >/dev/null 2>&1 && fail "cli.link must refuse a foreign file"
+[[ $(cat "$link") == '#!/bin/sh' ]] || fail "a foreign file was changed"
+rm "$link"
+ok "cli.link creates, uses and removes ~/.local/bin/gearlever-cosmic-cli, and leaves foreign files alone"
+
 # Gear Lever compatible flags.
 "$cli" --list-installed --json | jq_py 'd["schema_version"], len(d["installed"])' | grep -qx "(1, 5)" || fail "--list-installed --json"
 "$cli" --remove "$H/AppImages/mystery_app.appimage" | grep -q "Nothing was changed" || fail "--remove without -y must be a plan"
+# APP may be an id, a name or a relative path, as in `run`; an unknown one lists the known ids.
+"$cli" remove mystery_app | grep -q "Nothing was changed" || fail "remove by id"
+( cd "$H/AppImages" && "$cli" remove mystery_app.appimage | grep -q "Nothing was changed" ) || fail "remove by relative path"
+unknown=$("$cli" update no_such_app 2>&1) && fail "unknown APP must fail"
+grep -q "Known ids:.*mystery_app" <<<"$unknown" || fail "unknown APP must list the known ids: $unknown"
 "$cli" --remove "$H/AppImages/mystery_app.appimage" -y >/dev/null
 [[ ! -e $H/AppImages/mystery_app.appimage && ! -e $H/.local/share/applications/mystery_app.desktop ]] || fail "remove -y"
 ls "$H/.local/share/Trash/files" | grep -q '^mystery_app.appimage$' || fail "removed file should be in the Trash"

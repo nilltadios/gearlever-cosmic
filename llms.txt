@@ -2,7 +2,7 @@
 
 Native Rust/libcosmic AppImage manager with a headless agent CLI. Shipped as an AppImage.
 
-- CLI executable: gearlever-cosmic-cli (inside the AppImage: `GearLever_COSMIC-x86_64.AppImage cli ...`)
+- CLI executable: gearlever-cosmic-cli (from an AppImage: the AppImage's path followed by `cli`; `guide` prints the exact command)
 - Start here: gearlever-cosmic-cli guide
 - Full docs from the CLI: gearlever-cosmic-cli docs [llms|cli|agents|ui-cli|updates|parity]
 - Discover: gearlever-cosmic-cli commands --json

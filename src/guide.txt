@@ -4,7 +4,7 @@ gearlever-cosmic-cli manages AppImages: add them to the app menu, update them
 (in place, also while they run), edit launch options, and check whether they
 can start on this system. It works directly without a window (1), or by
 operating the open window like a person would (2).
-From the AppImage, run every command as:  GearLever_COSMIC-x86_64.AppImage cli ...
+Run every command as:  gearlever-cosmic-cli ...
 
 1. Direct commands (no window needed). Same backend as the GUI.
    commands --json            every command id, effects and parameter schema
@@ -41,10 +41,14 @@ Common tasks
    Add a file to the menu:             run --cmd 'app.integrate={"file":"/abs/App.AppImage"}'
    Use your own icon / the official:   app.set-icon / app.reset-icon
    Fix menu entries after self-updates: run --apply --cmd 'app.sync-menu={}'
+   Same app also installed as Flatpak:  app.list shows "flatpak": "<app id>"
+   Put this CLI on PATH:               run --apply --cmd 'cli.link={"enabled":true}'
+       creates ~/.local/bin/gearlever-cosmic-cli; settings.get shows cli_link
 
-Gear Lever's options work too: --integrate FILE, --update FILE|--all,
---remove FILE, --list-installed [--json], --list-updates [--json],
---list-update-managers, --set-update-source FILE --manager NAME KEY=VALUE.
+Gear Lever's options work too: --integrate FILE, --update APP|--all,
+--remove APP, --list-installed [--json], --list-updates [--json],
+--list-update-managers, --set-update-source APP --manager NAME KEY=VALUE.
+APP is an id, name, AppImage path or menu entry, as in run.
 Their changes need -y (or --apply); without it they print the plan.
 
 Rules

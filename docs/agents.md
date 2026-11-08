@@ -1,6 +1,6 @@
 # Agent workflow
 
-Use `gearlever-cosmic-cli` (from the AppImage: `GearLever_COSMIC-x86_64.AppImage cli`). Run `guide` first.
+Use `gearlever-cosmic-cli` (from an AppImage: the AppImage's path followed by `cli`, such as `~/AppImages/gear_lever_cosmic.appimage cli`). Run `guide` first; it prints the exact command.
 
 1. Discover with `commands --json` or `describe ID`. Do not invent fields.
 2. Read the state: `app.list`, `update.check`, `app.requirements`, `file.inspect`. Check `warnings`.

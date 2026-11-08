@@ -73,6 +73,9 @@ pub struct App {
     pub update_source_origin: Option<Origin>,
     /// A Gear Lever source that could not be used, with the reason.
     pub update_source_error: Option<String>,
+    /// A Flatpak of the same app is installed too (its app id): the app menu
+    /// shows both, and it is unclear which one starts.
+    pub flatpak: Option<String>,
     /// The standard file name this app could be renamed to (`app.rename-file`),
     /// when its current name differs, e.g. a version left from a first install.
     pub standard_path: Option<PathBuf>,
@@ -179,6 +182,7 @@ pub fn load(paths: &Paths, settings: &Settings) -> Inventory {
         }
     };
     let gearlever = store::gearlever_all(paths);
+    let flatpaks = crate::flatpak::installed(paths);
     let gl_by_path: BTreeMap<PathBuf, &store::GearLeverApp> = gearlever
         .values()
         .filter_map(|a| a.file.clone().map(|f| (f, a)))
@@ -227,7 +231,8 @@ pub fn load(paths: &Paths, settings: &Settings) -> Inventory {
             )
         });
         let primary = entries.remove(0);
-        inv.apps.push(build(
+        let menu = primary.desktop.clone();
+        let mut app = build(
             paths,
             settings,
             &store,
@@ -235,13 +240,41 @@ pub fn load(paths: &Paths, settings: &Settings) -> Inventory {
             primary,
             entries,
             &inv.folder,
-        ));
+        );
+        app.flatpak = flatpak_duplicate(
+            &flatpaks,
+            app.metadata.as_ref(),
+            &menu,
+            app.menu_name.as_deref(),
+        );
+        inv.apps.push(app);
     }
     inv.apps.sort_by_key(|a| a.name.to_lowercase());
     for i in 0..inv.apps.len() {
         inv.apps[i].standard_path = crate::ops::standard_path(paths, settings, &inv.apps[i]);
     }
     inv
+}
+
+/// The Flatpak this AppImage duplicates, by the window class and name of its
+/// menu entry or of the desktop file inside the AppImage.
+pub fn flatpak_duplicate(
+    flatpaks: &[crate::flatpak::FlatpakApp],
+    meta: Option<&Metadata>,
+    menu: &DesktopFile,
+    menu_name: Option<&str>,
+) -> Option<String> {
+    let embedded = meta
+        .and_then(|m| m.desktop_entry.as_deref())
+        .map(DesktopFile::parse);
+    let wm_class = menu
+        .main("StartupWMClass")
+        .or_else(|| embedded.as_ref().and_then(|d| d.main("StartupWMClass")));
+    let names = [
+        meta.and_then(|m| m.name.as_deref()).unwrap_or(""),
+        menu_name.unwrap_or(""),
+    ];
+    crate::flatpak::matching(flatpaks, &names, wm_class.as_deref()).map(|f| f.id.clone())
 }
 
 fn build(
@@ -369,6 +402,7 @@ fn build(
         update_source,
         update_source_origin: origin,
         update_source_error: source_error,
+        flatpak: None,
         standard_path: None,
         website: config
             .website
