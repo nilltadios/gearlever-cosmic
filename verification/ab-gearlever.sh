@@ -38,8 +38,7 @@ for p in sorted(set(gl) | set(ours)):
     g, o = gl.get(p), ours.get(p)
     gv = (g['current_version'] or 'unknown') if g else '(not listed)'
     ov = (o['current_version'] or 'unknown') if o else '(not listed)'
-    print(f"  {os.path.basename(p):42} GL {gv:>20}   ours {ov:>20}"
-          + ("   <- menu entry outdated" if o and o.get('menu_outdated') else ""))
+    print(f"  {os.path.basename(p):42} GL {gv:>20}   ours {ov:>20}")
 gu = json.load(open(f"{out}/A-gearlever-updates.json")) if os.path.getsize(f"{out}/A-gearlever-updates.json") else {"updates": []}
 print(f"Gear Lever --list-updates: {len(gu['updates'])} updates")
 checks = json.load(open(f"{out}/A-ours-check.json"))["results"][0]["data"]

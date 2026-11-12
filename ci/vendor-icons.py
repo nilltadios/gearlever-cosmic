@@ -22,10 +22,16 @@ with tempfile.TemporaryDirectory(prefix="gearlever-icons-") as work:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(svg.resolve(), target)
     shutil.copy2(source / "LICENSE", dest / "LICENSE")
+    # Icons cosmic-icons lacks, drawn for this app (resources/icons/custom).
+    for svg in sorted((ROOT / "resources/icons/custom").glob("*.svg")):
+        target = dest / "scalable/actions" / svg.name
+        if target.exists():
+            raise SystemExit(f"{svg.name} now exists in cosmic-icons; drop the custom copy")
+        shutil.copy2(svg, target)
     directories = sorted(str(p.relative_to(dest)) for p in (dest / "scalable").iterdir() if p.is_dir())
     index = "[Icon Theme]\nName=Gear Lever COSMIC\nComment=COSMIC fallback icons for Gear Lever COSMIC\nInherits=breeze,Adwaita,hicolor\nDirectories=" + ",".join(directories) + "\n"
     for directory in directories:
         index += f"\n[{directory}]\nSize=16\nMinSize=8\nMaxSize=512\nType=Scalable\nContext={directory.split('/')[-1].title()}\n"
     (dest / "index.theme").write_text(index)
-    (dest / "SOURCE.txt").write_text(f"Cosmic Icons by System76\n{URL}\nCommit: {COMMIT}\nIcon assets: CC-BY-SA-4.0 (see LICENSE).\nScalable icons were combined into an application-private theme.\n")
+    (dest / "SOURCE.txt").write_text(f"Cosmic Icons by System76\n{URL}\nCommit: {COMMIT}\nIcon assets: CC-BY-SA-4.0 (see LICENSE).\nScalable icons were combined into an application-private theme.\nview-app-grid-symbolic and view-list-symbolic in actions/ are drawn for Gear Lever COSMIC (resources/icons/custom, GPL-3.0-or-later).\n")
 print(dest)

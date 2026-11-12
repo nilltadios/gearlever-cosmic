@@ -8,7 +8,8 @@ Run from the project root. Every script prints `ok:` lines and `PASS`, exits non
 | CLI workflow | `verification/cli-workflow.sh` | Dry runs, integrating, refusing fake AppImages, honest statuses with a local server, **updating a running app in place** (it keeps running on the old file), Trash, self-update menu sync, custom icon through a replace, fuse3-only system, Gear Lever options |
 | GUI workflow | `verification/gui-workflow.sh` | A real window driven only by `ui` controls: running badge, `--apply` guards, Updates page, GUI update of a running app, Add page refusal and integration, icons, arguments, environment, remove dialog, renders |
 | Launch output | `verification/check-launch-output.sh [CLI]` | An app started by `app.launch` keeps writing stdout/stderr after the launcher exits (to `launch-logs/<entry>.log`); with pipes it died on its first write, which hung Electron apps such as ZCode |
-| Auto-sync guardrail | `verification/check-auto-sync.sh` | A normal window refreshes only its own outdated entries and leaves a Gear Lever entry byte for byte |
+| Bundled icons, empty home | `verification/check-icons-self-contained.sh` | With only `resources/` on `XDG_DATA_DIRS` and no apps, the window starts, shows the empty page and resolves every icon from the bundled theme |
+| No menu rewrites | `verification/check-no-menu-rewrite.sh` | A normal window leaves every menu entry byte for byte, even with a stale `X-AppImage-Version`, and reads the version from the file |
 | FUSE on another system | `verification/check-requirements.sh APP_ID` | A FUSE 2 AppImage reported as missing libfuse.so.2 on a simulated fuse3-only system |
 | Dependencies | `verification/check-dependencies.sh` | Crates, libcosmic and Rust against their latest releases |
 | A/B with Gear Lever | `verification/ab-gearlever.sh` | Both CLIs on the real installed apps (read-only) and on a fixture home; findings in `docs/parity.md` |
@@ -16,4 +17,6 @@ Run from the project root. Every script prints `ok:` lines and `PASS`, exits non
 | Release bump | `verification/check-release-bump.sh [REF]` | Shipped files changed since tag `vVERSION` need a new version and metainfo `<release>`; run by a pre-push hook for Claude Code |
 | AppImage | `packaging/build-appimage.sh && dist/*.AppImage cli --version && dist/*.AppImage --preview app --capture /abs.png` | Packaging, bundled glibc, host GPU drivers, CLI hook |
 
-Renders must be looked at: a file existing is not proof that the layout is right. Pointer hover, native file choosers and real compositor drag and drop are not automated; check them by hand.
+Run every script that opens a window through `verification/private-bus.sh SCRIPT`: it gives the test its own D-Bus session, so test windows cannot reach a Gear Lever COSMIC that is open on the desktop, and it stops the portal and secret-service helpers that session started.
+
+Renders must be looked at: a file existing is not proof that the layout is right. Test windows must show their icons: a build run from the source tree adds `resources/` (the vendored GearLeverCosmic theme) to `XDG_DATA_DIRS`, as the AppImage does with its `share/`, and `ui inspect` lists any icon it cannot resolve in `icons_missing`, which `gui-workflow.sh` requires to be empty. Pointer hover, native file choosers and real compositor drag and drop are not automated; check them by hand.

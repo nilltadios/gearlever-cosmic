@@ -10,6 +10,7 @@ pub mod host;
 pub mod library;
 pub mod ops;
 pub mod paths;
+pub mod relaunch;
 pub mod requirements;
 pub mod settings;
 pub mod store;

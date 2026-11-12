@@ -3,11 +3,6 @@
     "AppList": {
       "additionalProperties": false,
       "properties": {
-        "outdated_menu": {
-          "default": false,
-          "description": "Only apps whose menu entry no longer matches the file.",
-          "type": "boolean"
-        },
         "search": {
           "default": "",
           "description": "Case-insensitive filter on name, id and path.",
@@ -30,6 +25,19 @@
       "required": [
         "app",
         "arguments"
+      ],
+      "type": "object"
+    },
+    "CliLink": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "true: link ~/.local/bin/gearlever-cosmic-cli to this AppImage (or the\nnative CLI). false: move the link to the Trash.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
       ],
       "type": "object"
     },
@@ -783,6 +791,23 @@
         },
         "params": {
           "$ref": "#/$defs/SettingsSet"
+        }
+      },
+      "required": [
+        "command",
+        "params"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "const": "cli.link",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/$defs/CliLink"
         }
       },
       "required": [

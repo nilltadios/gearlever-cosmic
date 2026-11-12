@@ -138,6 +138,14 @@ impl App {
                 Dialog::Confirm(op, _) => {
                     list.push(g("dialog.confirm", op.title(), Message::Confirm))
                 }
+                Dialog::Relaunch(a) => list.push(g(
+                    "dialog.confirm",
+                    format!(
+                        "Relaunch {} (asks it to quit, then starts the new file)",
+                        a.name
+                    ),
+                    Message::Confirm,
+                )),
                 Dialog::About => {}
             }
             return list;
@@ -163,12 +171,25 @@ impl App {
                 Message::ClearNotice,
             ));
         }
-        if self.outcome.is_some() {
+        if let Some(o) = &self.outcome {
             list.push(c(
                 "result.dismiss",
                 "Dismiss the last result",
                 Message::ClearOutcome,
             ));
+            if !self.busy() && !gearlever_cosmic::host::sandboxed() {
+                for id in &o.replaced {
+                    if let Some(a) = self.app(id)
+                        && self.running.get(id).is_some_and(|r| r.old_version)
+                    {
+                        list.push(c(
+                            "result.relaunch",
+                            format!("Relaunch {} with the new version (asks first)", a.name),
+                            Message::AskRelaunch(id.clone()),
+                        ));
+                    }
+                }
+            }
         }
         if self.core.window.show_context {
             self.settings_controls(&mut list);
@@ -419,6 +440,15 @@ impl App {
             format!("Launch {}", a.name),
             Message::Launch(id.clone()),
         ));
+        if self.running.get(&id).is_some_and(|r| r.old_version)
+            && !gearlever_cosmic::host::sandboxed()
+        {
+            list.push(c(
+                "app.relaunch",
+                format!("Relaunch {} with the new version (asks first)", a.name),
+                Message::AskRelaunch(id.clone()),
+            ));
+        }
         list.push(c(
             "app.remove",
             format!("Remove {} (asks first)", a.name),
@@ -439,13 +469,6 @@ impl App {
                         .unwrap_or_default()
                 ),
                 Message::UpdateApp(id.clone()),
-            ));
-        }
-        if !a.menu_outdated.is_empty() {
-            list.push(g(
-                "app.sync-menu",
-                "Refresh the outdated menu entry",
-                Message::SyncMenu(vec![id.clone()]),
             ));
         }
         list.push(g(
@@ -505,7 +528,7 @@ impl App {
     fn settings_controls(&self, list: &mut Vec<Control>) {
         let s = &self.settings;
         type Toggle = (&'static str, &'static str, bool, fn(bool) -> SettingChange);
-        let toggles: [Toggle; 8] = [
+        let toggles: [Toggle; 7] = [
             (
                 "settings.show-external",
                 "Show apps outside the folder",
@@ -541,12 +564,6 @@ impl App {
                 "Keep replaced versions in the Trash",
                 s.keep_replaced_versions_in_trash,
                 SettingChange::KeepReplaced,
-            ),
-            (
-                "settings.sync-menus",
-                "Keep menu entries in sync",
-                s.sync_menu_entries,
-                SettingChange::SyncMenus,
             ),
             (
                 "settings.debug-logs",
@@ -623,7 +640,7 @@ impl App {
     fn ui_page(&self) -> Value {
         match self.page {
             Page::Apps => json!({
-                "apps": self.visible_apps().iter().map(|a| json!({"id":a.id,"name":a.name,"version":a.version,"menu_version":a.menu_version,"menu_outdated":a.menu_outdated,
+                "apps": self.visible_apps().iter().map(|a| json!({"id":a.id,"name":a.name,"version":a.version,
                     "running":self.running.get(&a.id),"update":self.checks.get(&a.id).map(|c| json!({"status":c.status,"label":status_text(c)})),
                     "requirements":self.requirements.get(&a.id).and_then(|r| r.as_ref().ok()).map(|r| &r.verdict)})).collect::<Vec<_>>(),
                 "selected": self.selected_app().map(|a| json!({
@@ -658,15 +675,16 @@ impl App {
         });
         json!({"instance":self.ui_instance,"process_id":std::process::id(),"page":self.page.name(),"page_id":self.page.slug(),
             "loading":self.loading,"busy":self.busy(),"checking":self.checking_all || !self.checking.is_empty(),
-            "settings_open":self.core.window.show_context,"settings":self.settings,"rendered_theme_dark":cosmic::theme::active().theme_type.is_dark(),
+            "icon_theme":cosmic::icon_theme::default(),"icons_missing":missing_icons(),"settings_open":self.core.window.show_context,"settings":self.settings,"rendered_theme_dark":cosmic::theme::active().theme_type.is_dark(),
             "dialog":self.dialog.as_ref().map(|d| match d {
                 Dialog::Remove(apps) => json!({"kind":"remove","apps":apps.iter().map(|a| json!({"id":a.id,"name":a.name,"path":a.path})).collect::<Vec<_>>(),
                     "explanation":"The AppImage, its menu entry and its icon move to the Trash."}),
                 Dialog::Confirm(op, plan) => json!({"kind":"confirm","title":op.title(),"plan":plan}),
+                Dialog::Relaunch(a) => json!({"kind":"relaunch","app":{"id":a.id,"name":a.name,"path":a.path}}),
                 Dialog::About => json!({"kind":"about"}),
             }),
             "operation":operation,
-            "last_operation":self.outcome.as_ref().map(|o| json!({"title":o.title,"ok":o.ok,"steps":o.steps,"notes":o.notes,"errors":o.errors,"report":o.log})),
+            "last_operation":self.outcome.as_ref().map(|o| json!({"title":o.title,"ok":o.ok,"steps":o.steps,"notes":o.notes,"errors":o.errors,"report":o.log,"replaced":o.replaced})),
             "notice":self.notice,"drag_over":self.drag_over,"search":self.query,"window":self.window_state,"sidebar_visible":self.core.nav_bar_active(),
             "view":self.ui_page(),
             "fields":self.ui_fields().iter().map(|(id, label)| json!({"id":id,"label":label})).collect::<Vec<_>>(),
@@ -895,5 +913,85 @@ impl App {
             )),
             Err(e) => pending.respond(protocol::error(e)),
         }
+    }
+}
+
+/// Every symbolic icon the window uses. `ui inspect` reports the ones the
+/// icon theme lookup cannot find (`icons_missing`), so a test window that
+/// would render blank icons fails its checks.
+pub const UI_ICONS: &[&str] = &[
+    "dialog-information-symbolic",
+    "dialog-warning-symbolic",
+    "edit-copy-symbolic",
+    "folder-download-symbolic",
+    "folder-open-symbolic",
+    "folder-symbolic",
+    "go-next-symbolic",
+    "go-previous-symbolic",
+    "help-about-symbolic",
+    "list-add-symbolic",
+    "list-remove-symbolic",
+    "media-playback-start-symbolic",
+    "preferences-system-symbolic",
+    "software-update-available-symbolic",
+    "view-app-grid-symbolic",
+    "view-list-symbolic",
+    "view-refresh-symbolic",
+    "web-browser-symbolic",
+    "window-close-symbolic",
+];
+
+fn missing_icons() -> Vec<&'static str> {
+    UI_ICONS
+        .iter()
+        .copied()
+        .filter(|n| cosmic::widget::icon::from_name(*n).path().is_none())
+        .collect()
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::UI_ICONS;
+    use std::path::Path;
+
+    /// The list matches the icons named in the window's code, and the vendored
+    /// theme (shipped in the AppImage) contains each of them, so the window
+    /// needs no icons from the desktop.
+    #[test]
+    fn every_ui_icon_is_listed_and_vendored() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut used = std::collections::BTreeSet::new();
+        for file in ["src/app.rs", "src/ui_view.rs"] {
+            let text = std::fs::read_to_string(root.join(file)).unwrap();
+            for part in text.split('"').skip(1).step_by(2) {
+                if part.ends_with("-symbolic") && !part.contains(' ') {
+                    used.insert(part.to_string());
+                }
+            }
+        }
+        let listed: std::collections::BTreeSet<String> =
+            UI_ICONS.iter().map(|s| s.to_string()).collect();
+        assert_eq!(used, listed, "update UI_ICONS");
+        let theme = root.join("resources/icons/GearLeverCosmic/scalable");
+        let files: Vec<String> = walk(&theme);
+        for name in UI_ICONS {
+            assert!(
+                files.iter().any(|f| f == &format!("{name}.svg")),
+                "{name} is not in resources/icons/GearLeverCosmic"
+            );
+        }
+    }
+
+    fn walk(dir: &Path) -> Vec<String> {
+        let mut out = vec![];
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                out.extend(walk(&p));
+            } else if let Some(n) = p.file_name() {
+                out.push(n.to_string_lossy().into_owned());
+            }
+        }
+        out
     }
 }

@@ -68,19 +68,23 @@ run --apply --cmd 'app.update={"apps":["demo_editor"]}' > "$out/update.json" || 
 grep -q "still running the previous version" "$out/update.json" || fail "update should note the running instance"
 kill -0 "$app_pid" || fail "the running app was stopped by the update"
 [[ "$(readlink /proc/$app_pid/exe)" == *"(deleted)" ]] || fail "running instance should still use the old file"
-v=$(run --cmd 'app.info={"app":"demo_editor"}' | jq_py 'd["results"][0]["data"]["version"], d["results"][0]["data"]["menu_version"], d["results"][0]["data"]["running"]["old_version"]')
-[[ $v == "('1.1', '1.1', True)" ]] || fail "after update expected 1.1 in file and menu, old version running: $v"
-ok "updated to 1.1 in place while running; the app kept running on the old file; menu shows 1.1"
+v=$(run --cmd 'app.info={"app":"demo_editor"}' | jq_py 'd["results"][0]["data"]["version"], d["results"][0]["data"]["running"]["old_version"]')
+[[ $v == "('1.1', True)" ]] || fail "after update expected 1.1 from the file, old version running: $v"
+grep -q '^X-AppImage-Version=' "$H/.local/share/applications/demo_editor.desktop" && fail "the menu entry should carry no version"
+ok "updated to 1.1 in place while running; the app kept running on the old file; the menu entry carries no version"
 ls "$H/.local/share/Trash/files" | grep -q "demo_editor.appimage.replaced" || fail "replaced version should be in the Trash"
 ok "replaced version kept in the Trash"
 
 # Self-update simulation: the file changes under the menu entry (issue #497).
 cp "$out/server/sky-notes/Sky-Notes-2.1.0.AppImage" "$H/AppImages/.tmp" && mv "$H/AppImages/.tmp" "$H/AppImages/sky_notes.appimage"
-v=$(run --cmd 'app.info={"app":"sky_notes"}' | jq_py 'd["results"][0]["data"]["version"], d["results"][0]["data"]["menu_version"], d["results"][0]["data"]["menu_outdated"]')
-[[ $v == "('2.1.0', '2.0.0', ['version', 'file'])" ]] || fail "self-update should be visible: $v"
-run --apply --cmd 'app.sync-menu={}' >/dev/null
-grep -q '^X-AppImage-Version=2.1.0$' "$H/.local/share/applications/sky_notes.desktop" || fail "sync-menu should write 2.1.0"
-ok "a self-updated file shows its real version (2.1.0, menu said 2.0.0) and sync-menu fixes the menu entry"
+sha_before=$(sha256sum < "$H/.local/share/applications/sky_notes.desktop")
+v=$(run --cmd 'app.info={"app":"sky_notes"}' | jq_py 'd["results"][0]["data"]["version"], "menu_outdated" in d["results"][0]["data"]')
+[[ $v == "('2.1.0', False)" ]] || fail "self-update should show 2.1.0 from the file, with no menu-outdated flag: $v"
+[[ $(sha256sum < "$H/.local/share/applications/sky_notes.desktop") == "$sha_before" ]] || fail "listing must not rewrite the menu entry"
+run --apply --cmd 'app.sync-menu={"apps":["sky_notes"]}' >/dev/null
+grep -q '^Name=Sky Notes$' "$H/.local/share/applications/sky_notes.desktop" || fail "reload should keep the name"
+grep -q '^X-AppImage-Version=' "$H/.local/share/applications/sky_notes.desktop" && fail "reload should write no version"
+ok "a self-updated file shows its real version (2.1.0) without touching the menu entry; Reload rewrites it with no version"
 
 # Custom icon kept across an update.
 printf '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><rect width="8" height="8" fill="gold"/></svg>' > "$H/my.svg"

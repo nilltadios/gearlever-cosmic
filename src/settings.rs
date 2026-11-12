@@ -36,10 +36,12 @@ pub struct Settings {
     pub debug_logs: bool,
     /// Keep the version an update replaces in the desktop Trash (recoverable).
     pub keep_replaced_versions_in_trash: bool,
-    /// Refresh the name, version and icon of menu entries this app wrote when
-    /// their AppImage changed on disk. Other entries are only flagged.
-    pub sync_menu_entries: bool,
     pub theme: Theme,
+    /// Removed in 0.1.4 together with the "Menu outdated" check. Still
+    /// accepted so settings files written by 0.1.3 load; never written back.
+    #[serde(rename = "sync_menu_entries", skip_serializing)]
+    #[schemars(skip)]
+    legacy_sync_menu_entries: Option<bool>,
 }
 
 impl Default for Settings {
@@ -54,8 +56,8 @@ impl Default for Settings {
             preview_minimal: true,
             debug_logs: false,
             keep_replaced_versions_in_trash: true,
-            sync_menu_entries: true,
             theme: Theme::System,
+            legacy_sync_menu_entries: None,
         }
     }
 }
@@ -133,6 +135,15 @@ fn prune_backups(dir: &Path, name: &str, keep: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_0_1_3_settings_file_with_the_removed_sync_option_still_loads() {
+        let s: Settings =
+            serde_json::from_str(r#"{"sync_menu_entries":false,"debug_logs":true}"#).unwrap();
+        assert!(s.debug_logs);
+        let back = serde_json::to_string(&s).unwrap();
+        assert!(!back.contains("sync_menu_entries"), "{back}");
+        assert!(serde_json::from_str::<Settings>(r#"{"nope":1}"#).is_err());
+    }
     #[test]
     fn settings_round_trip_and_keep_backups() {
         let dir = tempfile::tempdir().unwrap();

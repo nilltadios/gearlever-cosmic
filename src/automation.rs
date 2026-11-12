@@ -154,9 +154,6 @@ pub struct AppList {
     /// Case-insensitive filter on name, id and path.
     #[serde(default)]
     pub search: String,
-    /// Only apps whose menu entry no longer matches the file.
-    #[serde(default)]
-    pub outdated_menu: bool,
 }
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -382,7 +379,7 @@ pub fn catalog() -> Vec<Value> {
     vec![
         entry::<AppList>(
             "app.list",
-            "List integrated AppImages with the version read from each file, the menu entry's version, whether the menu entry is outdated, update source, and running state (pids; old_version means a replaced file is still running).",
+            "List integrated AppImages with the version read from each file, update source, and running state (pids; old_version means a replaced file is still running; the window offers Relaunch).",
             false,
             json!({"search":""}),
         ),
@@ -490,7 +487,7 @@ pub fn catalog() -> Vec<Value> {
         ),
         entry::<Targets>(
             "app.sync-menu",
-            "Rewrite menu entries from each AppImage's own metadata (name, version, icon), keeping arguments and environment. Empty apps = every app whose menu entry is outdated. Gear Lever's \"Reload metadata\".",
+            "Rewrite menu entries from each AppImage's own metadata (name, icon, window matching), keeping arguments and environment. Empty apps = every integrated app. Gear Lever's \"Reload metadata\".",
             true,
             json!({"apps":[]}),
         ),
@@ -661,7 +658,6 @@ fn settings_doc(s: &Settings) -> Value {
         "preview_minimal":"Show opened files in a compact preview",
         "debug_logs":"More detailed logs",
         "keep_replaced_versions_in_trash":"Put the version an update replaces in the Trash, so it can be restored",
-        "sync_menu_entries":"The window refreshes outdated menu entries it wrote itself after loading; entries written by Gear Lever or by the app are only flagged",
         "theme":"system, dark or light"}})
 }
 
@@ -811,11 +807,7 @@ pub fn prepare(
         }
         Request::SyncMenu(p) => {
             let apps = if p.apps.is_empty() {
-                inv.apps
-                    .iter()
-                    .filter(|a| !a.menu_outdated.is_empty())
-                    .cloned()
-                    .collect()
+                inv.apps.clone()
             } else {
                 targets(inv, &p.apps)?
             };
@@ -945,7 +937,6 @@ pub fn run_request(request: &Request, ctx: &Context, policy: &Policy, job: &Job)
                 .apps
                 .iter()
                 .filter(|a| format!("{} {} {}", a.name, a.id, a.path.display()).to_lowercase().contains(&q))
-                .filter(|a| !p.outdated_menu || !a.menu_outdated.is_empty())
                 .map(|a| app_json(a, &running))
                 .collect();
             Some(json!({"apps":apps,"summary":{"listed":apps.len(),"integrated":inv.apps.len(),"folder":inv.folder,"applications_dir":inv.applications_dir,"scanned_menu_entries":inv.scanned_entries,"show_external":ctx.settings.show_external}}))
@@ -1214,8 +1205,7 @@ fn compat_json(
         "manager":check.and_then(|c| c.source.clone()).or(app.update_source.as_ref().map(|s| s.manager().name.to_string())),
         "embedded_source":check.map(|c| c.origin == Some(updates::Origin::Embedded)).unwrap_or(app.update_info.is_some() && app.update_source.is_none()),
         "running":running.contains_key(&app.id),
-        "status":check.map(|c| &c.status),"message":check.map(|c| &c.message),"can_install":check.map(|c| c.can_install),
-        "menu_version":app.menu_version,"menu_outdated":app.menu_outdated})
+        "status":check.map(|c| &c.status),"message":check.map(|c| &c.message),"can_install":check.map(|c| c.can_install)})
 }
 
 fn compat(action: Action) -> Result<Value> {
@@ -1363,13 +1353,7 @@ fn compat(action: Action) -> Result<Value> {
                         (None, None, Some(_)) => "updates itself".into(),
                         _ => "UpdatesNotAvailable".into(),
                     };
-                    let mut v = format!("[{}]", a.display_version());
-                    if !a.menu_outdated.is_empty() {
-                        v.push_str(&format!(
-                            " (menu shows {})",
-                            a.menu_version.as_deref().unwrap_or("none")
-                        ));
-                    }
+                    let v = format!("[{}]", a.display_version());
                     let mut src = format!("[{src}]");
                     if let Some(f) = &a.flatpak {
                         src.push_str(&format!(" [also Flatpak {f}]"));

@@ -7,7 +7,7 @@
 //! the old one and renamed over it. A running instance keeps the old file's
 //! data until it exits; the next start uses the new version.
 use crate::{
-    appimage::{self, Fingerprint, Metadata},
+    appimage::{self, Metadata},
     desktop::{DesktopFile, Exec, MAIN},
     library::{App, Inventory, OWN_KEY},
     paths::Paths,
@@ -277,7 +277,7 @@ impl Operation {
             }
             Self::SyncMenu(apps) => apps
                 .iter()
-                .map(|a| format!("Rewrite {} from the AppImage's own metadata (name, version {}, icon), keeping arguments and environment", short(&a.desktop_file), a.display_version()))
+                .map(|a| format!("Rewrite {} from the AppImage's own metadata (name, icon, window matching), keeping arguments and environment", short(&a.desktop_file)))
                 .collect(),
             Self::ImportGearLever(list) => list
                 .iter()
@@ -576,10 +576,9 @@ fn compose_entry(input: EntryInput) -> DesktopFile {
     if let Some(icon) = &input.icon {
         d.set(MAIN, "Icon", icon);
     }
-    match &input.meta.version {
-        Some(v) => d.set(MAIN, "X-AppImage-Version", v),
-        None => d.remove(MAIN, "X-AppImage-Version"),
-    }
+    // The version is read from the file whenever it is needed; a copy in the
+    // menu entry would go stale when the app replaces its own file.
+    d.remove(MAIN, "X-AppImage-Version");
     d.set(MAIN, OWN_KEY, "true");
     // Activation through D-Bus would start a different binary than this file.
     d.remove(MAIN, "DBusActivatable");
@@ -868,8 +867,6 @@ fn run(
                     report,
                 )?;
                 let c = store.entry(&app.path);
-                c.synced = Some(meta.fingerprint);
-                c.synced_version = meta.version.clone();
                 c.default_arguments = Some(meta.default_arguments.clone());
                 c.updated_at = Some(crate::now());
                 if let Some(s) = source {
@@ -932,11 +929,8 @@ fn run(
                 let desktop = desktop_path(paths, &target);
                 write_atomic(&desktop, entry.text().as_bytes(), 0o644)?;
                 report.changed.push(desktop.clone());
-                let fp = Fingerprint::of(&target)?;
                 let c = store.entry(&target);
                 *c = Default::default();
-                c.synced = Some(fp);
-                c.synced_version = meta.version.clone();
                 c.default_arguments = Some(meta.default_arguments.clone());
                 c.integrated_at = Some(crate::now());
                 c.update_source = source.clone();
@@ -1006,8 +1000,6 @@ fn run(
                 report,
             )?;
             let c = store.entry(&app.path);
-            c.synced = Some(meta.fingerprint);
-            c.synced_version = meta.version.clone();
             c.default_arguments = Some(meta.default_arguments.clone());
             c.updated_at = Some(crate::now());
             report.steps.push(format!(
@@ -1214,8 +1206,6 @@ fn run(
                     report,
                 )?;
                 let c = store.entry(&app.path);
-                c.synced = Some(meta.fingerprint);
-                c.synced_version = meta.version.clone();
                 if c.default_arguments.as_ref().is_none_or(|d| d.is_empty()) {
                     c.default_arguments = Some(meta.default_arguments.clone());
                 }
@@ -1383,7 +1373,8 @@ mod tests {
             entry.main("Exec").unwrap(),
             format!("env DESKTOPINTEGRATION=1 {} --flag %U", target.display())
         );
-        assert_eq!(entry.main("X-AppImage-Version").as_deref(), Some("1.0"));
+        // The AppImage's own entry carries X-AppImage-Version; ours does not.
+        assert!(entry.main("X-AppImage-Version").is_none());
         assert_eq!(
             entry.main("Icon").unwrap(),
             dir.path()
@@ -1397,7 +1388,7 @@ mod tests {
         );
         let inv = crate::library::load(&paths, &settings);
         assert_eq!(inv.apps.len(), 1);
-        assert!(inv.apps[0].menu_outdated.is_empty());
+        assert_eq!(inv.apps[0].version.as_deref(), Some("1.0"));
         assert_eq!(
             inv.apps[0].managed_by,
             crate::library::ManagedBy::GearLeverCosmic
@@ -1459,7 +1450,6 @@ mod tests {
         );
         let now = crate::library::load(&paths, &settings).apps[0].clone();
         assert_eq!(now.version.as_deref(), Some("2.0"));
-        assert_eq!(now.menu_version.as_deref(), Some("2.0"));
         assert_eq!(now.arguments, ["--custom"]);
         assert_eq!(now.path, app.path);
     }
@@ -1505,7 +1495,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_fixes_a_menu_entry_left_behind_by_a_self_update() {
+    fn a_self_update_shows_the_new_version_and_reload_rewrites_the_entry() {
         let (dir, paths, mut settings) = setup();
         settings.move_on_integrate = false;
         let src = dir.path().join("src");
@@ -1527,9 +1517,8 @@ mod tests {
         let newer = demo(&src, "n.AppImage", "1.5");
         fs::rename(&newer, &app.path).unwrap();
         let app = crate::library::load(&paths, &settings).apps[0].clone();
+        // The version is read from the file, so nothing needs refreshing.
         assert_eq!(app.version.as_deref(), Some("1.5"));
-        assert!(app.menu_outdated.contains(&"version".to_string()));
-        assert!(app.changed_since_sync);
         execute(
             Operation::SyncMenu(vec![app]),
             &paths,
@@ -1538,8 +1527,10 @@ mod tests {
         )
         .unwrap();
         let app = crate::library::load(&paths, &settings).apps[0].clone();
-        assert!(app.menu_outdated.is_empty(), "{:?}", app.menu_outdated);
-        assert_eq!(app.menu_version.as_deref(), Some("1.5"));
+        assert_eq!(app.version.as_deref(), Some("1.5"));
+        assert_eq!(app.menu_name.as_deref(), Some("Demo App"));
+        let d = DesktopFile::parse(&fs::read_to_string(&app.desktop_file).unwrap());
+        assert!(d.main("X-AppImage-Version").is_none());
     }
 
     #[test]
@@ -1666,11 +1657,6 @@ mod tests {
         store.entry(&target).default_arguments = Some(vec![]);
         store.save(&paths).unwrap();
         let app = crate::library::load(&paths, &settings).apps[0].clone();
-        assert!(
-            app.menu_outdated.contains(&"name".to_string()),
-            "{:?}",
-            app.menu_outdated
-        );
         execute(
             Operation::SyncMenu(vec![app]),
             &paths,
@@ -1688,8 +1674,6 @@ mod tests {
             d.main("Exec").unwrap(),
             format!("env DESKTOPINTEGRATION=1 {} --flag %U", target.display())
         );
-        let after = crate::library::load(&paths, &settings).apps[0].clone();
-        assert!(after.menu_outdated.is_empty(), "{:?}", after.menu_outdated);
     }
 
     #[test]

@@ -18,13 +18,13 @@ use std::{
 };
 
 /// Identity of a file's current contents without hashing it. Any rewrite,
-/// replacement or self-update changes at least one field.
+/// replacement or self-update changes at least one field. The device number
+/// is left out: btrfs assigns it per mount, so it can change across reboots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Fingerprint {
     pub size: u64,
     pub modified_ns: i64,
     pub inode: u64,
-    pub device: u64,
 }
 impl Fingerprint {
     pub fn of(path: &Path) -> Result<Self, String> {
@@ -33,14 +33,10 @@ impl Fingerprint {
             size: m.len(),
             modified_ns: m.mtime() * 1_000_000_000 + m.mtime_nsec(),
             inode: m.ino(),
-            device: m.dev(),
         })
     }
     pub fn key(&self) -> String {
-        format!(
-            "{:x}-{:x}-{:x}-{:x}",
-            self.size, self.modified_ns, self.inode, self.device
-        )
+        format!("{:x}-{:x}-{:x}", self.size, self.modified_ns, self.inode)
     }
 }
 

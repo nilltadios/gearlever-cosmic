@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Per-app configuration kept by this app (apps.json), and read-only access
 //! to Gear Lever's saved update sources (gearlever.conf) for migration.
-use crate::{appimage::Fingerprint, paths::Paths, updates::Source};
+use crate::{paths::Paths, updates::Source};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -18,9 +18,6 @@ pub struct AppConfig {
     /// Arguments the AppImage itself shipped when it was integrated. Used to
     /// tell customized arguments from defaults on update.
     pub default_arguments: Option<Vec<String>>,
-    /// The file as it was when this app last wrote its menu entry.
-    pub synced: Option<Fingerprint>,
-    pub synced_version: Option<String>,
     /// An icon the user chose; kept across updates and menu refreshes.
     pub custom_icon: Option<PathBuf>,
     pub integrated_at: Option<u64>,

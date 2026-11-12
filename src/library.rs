@@ -3,11 +3,11 @@
 //! ~/.local/share/applications that starts an AppImage, exactly as Gear Lever
 //! finds them, so apps integrated by Gear Lever appear here too.
 //!
-//! Name and version come from the AppImage itself, never only from the menu
-//! entry (Gear Lever issue #497). When the two differ the app is marked
-//! `menu_outdated` and can be synced.
+//! Name and version come from the AppImage itself, never from the menu entry
+//! (Gear Lever issue #497), so nothing goes stale when an app replaces its
+//! own file.
 use crate::{
-    appimage::{self, Fingerprint, Metadata},
+    appimage::{self, Metadata},
     desktop::{DesktopFile, Exec},
     paths::Paths,
     settings::Settings,
@@ -60,13 +60,8 @@ pub struct App {
     pub arguments: Vec<String>,
     pub default_arguments: Vec<String>,
     pub env: Vec<(String, String)>,
-    /// Name and version shown by the menu entry.
+    /// Name shown by the menu entry.
     pub menu_name: Option<String>,
-    pub menu_version: Option<String>,
-    /// The menu entry no longer matches the file (version, name or icon).
-    pub menu_outdated: Vec<String>,
-    /// The file changed since this app last wrote its menu entry (replaced or self-updated).
-    pub changed_since_sync: bool,
     pub update_info: Option<String>,
     pub self_updater: Option<appimage::SelfUpdater>,
     pub update_source: Option<Source>,
@@ -301,32 +296,7 @@ fn build(
         .and_then(|x| Exec::parse(&x).ok())
         .unwrap_or_default();
     let menu_name = e.desktop.main("Name");
-    let menu_version = e.desktop.main("X-AppImage-Version");
     let original_name = e.desktop.main("X-AppImage-Name");
-    let mut outdated = Vec::new();
-    if let Some(m) = &meta {
-        if m.version.is_some() && menu_version.is_some() && m.version != menu_version {
-            outdated.push("version".into());
-        }
-        let name_differs = match (&m.name, &original_name) {
-            (Some(n), Some(o)) => n != o,
-            // Written by this app before the file's name could be read (for
-            // example a DwarFS image an older reader could not open).
-            (Some(n), None) => {
-                e.desktop.main(OWN_KEY).is_some() && menu_name.as_ref().is_some_and(|mn| mn != n)
-            }
-            _ => false,
-        };
-        if name_differs {
-            outdated.push("name".into());
-        }
-    }
-    let changed = config
-        .synced
-        .is_some_and(|f| Fingerprint::of(&e.target).is_ok_and(|now| now != f));
-    if changed && !outdated.iter().any(|o| o == "file") {
-        outdated.push("file".into());
-    }
     let icon_value = e.desktop.main("Icon");
     let menu_icon = icon_value
         .as_ref()
@@ -394,9 +364,6 @@ fn build(
             .unwrap_or_default(),
         env: exec.env,
         menu_name,
-        menu_version,
-        menu_outdated: outdated,
-        changed_since_sync: changed,
         update_info: meta.as_ref().and_then(|m| m.update_info.clone()),
         self_updater: meta.as_ref().and_then(|m| m.self_updater.clone()),
         update_source,
@@ -494,8 +461,6 @@ mod tests {
         let a = &inv.apps[0];
         assert_eq!(a.id, "mendeley");
         assert_eq!(a.version.as_deref(), Some("2.148.0"));
-        assert_eq!(a.menu_version.as_deref(), Some("2.138.0"));
-        assert_eq!(a.menu_outdated, ["version"]);
         assert_eq!(a.managed_by, ManagedBy::GearLever);
         assert_eq!(
             a.other_desktop_files,

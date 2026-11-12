@@ -85,6 +85,7 @@ pub enum Dialog {
     Remove(Vec<AppItem>),
     /// A reviewed operation: title, plan lines, confirm label.
     Confirm(Box<Operation>, Vec<String>),
+    Relaunch(Box<AppItem>),
     About,
 }
 
@@ -139,6 +140,9 @@ pub enum Message {
     Hashes(PathBuf, Box<Result<Hashes, String>>),
     Launch(String),
     Launched(Result<(), String>),
+    /// Ask to relaunch a running app (confirmation first).
+    AskRelaunch(String),
+    Relaunched(Result<String, String>),
     OpenFolder(String),
     OpenWebsite(String),
     AskRemove(Vec<String>),
@@ -205,7 +209,6 @@ pub enum SettingChange {
     PreviewMinimal(bool),
     DebugLogs(bool),
     KeepReplaced(bool),
-    SyncMenus(bool),
     Theme(Theme),
 }
 
@@ -236,6 +239,8 @@ pub struct Outcome {
     pub notes: Vec<String>,
     pub errors: Vec<String>,
     pub log: Option<PathBuf>,
+    /// Apps this job replaced; a running one gets a Relaunch button.
+    pub replaced: Vec<String>,
 }
 
 pub struct RunningJob {
@@ -244,6 +249,8 @@ pub struct RunningJob {
     pub queue: Vec<Operation>,
     pub done: usize,
     pub total: usize,
+    /// Apps replaced by the operation that is running now.
+    pub replacing: Vec<String>,
 }
 
 pub struct App {
@@ -300,7 +307,6 @@ pub struct App {
     capture_ticks: u8,
     pub isolated: bool,
     pub ui_instance: String,
-    synced_once: bool,
 }
 
 pub fn theme_of(theme: Theme) -> cosmic::Theme {
@@ -516,6 +522,37 @@ impl App {
             |l| Message::Loaded(Box::new(l)),
         )
     }
+    /// The app is this running Gear Lever COSMIC.
+    fn is_self(&self, a: &AppItem) -> bool {
+        gearlever_cosmic::appimage_self().as_deref() == Some(a.path.as_path())
+    }
+    fn relaunch(&mut self, a: AppItem) -> Task<Message> {
+        if self.is_self(&a) {
+            // A second instance would only activate this one, so the new
+            // file waits until this process has exited.
+            let args = ["--wait-for-pid".to_string(), std::process::id().to_string()];
+            return match gearlever_cosmic::host::launch_file(&a.path, &args, None) {
+                Ok(_) => iced::exit(),
+                Err(e) => {
+                    self.notice = Some(e);
+                    Task::none()
+                }
+            };
+        }
+        let t = self.toast(format!("Relaunching {}…", a.name));
+        Task::batch([
+            t,
+            background(
+                move || {
+                    gearlever_cosmic::relaunch::relaunch(
+                        &a,
+                        gearlever_cosmic::relaunch::QUIT_TIMEOUT,
+                    )
+                },
+                Message::Relaunched,
+            ),
+        ])
+    }
     fn toast(&mut self, text: impl Into<String>) -> Task<Message> {
         self.toasts
             .push(widget::toaster::Toast::new(text.into()))
@@ -653,6 +690,7 @@ impl App {
             queue: ops,
             done: 0,
             total,
+            replacing: vec![],
         });
         self.next_op()
     }
@@ -666,6 +704,13 @@ impl App {
         }
         let op = running.queue.remove(0);
         running.title = op.title();
+        running.replacing = match &op {
+            Operation::Update { app, .. }
+            | Operation::Integrate {
+                replace: Some(app), ..
+            } => vec![app.id.clone()],
+            _ => vec![],
+        };
         let job = running.job.clone();
         let (paths, settings) = (self.paths.clone(), self.settings.clone());
         background(
@@ -688,7 +733,6 @@ impl App {
             SettingChange::PreviewMinimal(v) => s.preview_minimal = v,
             SettingChange::DebugLogs(v) => s.debug_logs = v,
             SettingChange::KeepReplaced(v) => s.keep_replaced_versions_in_trash = v,
-            SettingChange::SyncMenus(v) => s.sync_menu_entries = v,
             SettingChange::Theme(t) => s.theme = t,
         }
         self.save_settings(s)
@@ -912,9 +956,6 @@ impl App {
         if a.flatpak.is_some() {
             badges = badges.push(pill("Also a Flatpak".into()));
         }
-        if !a.menu_outdated.is_empty() {
-            badges = badges.push(pill("Menu outdated".into()));
-        }
         if let Some(Ok(r)) = self.requirements.get(&a.id)
             && r.verdict == Verdict::Missing
         {
@@ -961,7 +1002,7 @@ impl App {
                     "Open or drop an AppImage to add it to your app menu. Apps integrated with Gear Lever appear here too.",
                     "application-x-executable",
                 ))
-                .push(widget::container(widget::button::suggested("Open AppImage…").id(widget::Id::new("header.open")).on_press(Message::OpenFiles)).center_x(Length::Fill))
+                .push(widget::container(widget::button::suggested("Open AppImage…").id(widget::Id::new("apps.open")).on_press(Message::OpenFiles)).center_x(Length::Fill))
                 .into();
         }
         if apps.is_empty() {
@@ -1263,35 +1304,17 @@ impl App {
             col = col.push(self.banner(
                 "media-playback-start-symbolic",
                 if r.old_version {
-                    format!("{} is running a version that has since been replaced. Restart it to use the new version.", a.name)
+                    format!("{} is running a version that has since been replaced. Relaunch it to use the new version.", a.name)
                 } else {
                     format!("{} is running. Updates still install now; they take effect the next time it starts.", a.name)
                 },
-                None,
+                (r.old_version && !gearlever_cosmic::host::sandboxed()).then(|| {
+                    widget::button::suggested("Relaunch")
+                        .id(widget::Id::new("app.relaunch"))
+                        .on_press_maybe((!busy).then(|| Message::AskRelaunch(a.id.clone())))
+                        .into()
+                }),
             ));
-        }
-        if !a.menu_outdated.is_empty() {
-            let text = if a.menu_outdated.iter().any(|o| o == "version") {
-                format!(
-                    "The app menu shows version {}, but the file is {}. The AppImage was replaced or updated itself.",
-                    a.menu_version.as_deref().unwrap_or("none"),
-                    a.display_version()
-                )
-            } else {
-                "The AppImage changed since its menu entry was written (it was replaced or updated itself).".into()
-            };
-            col = col.push(
-                self.banner(
-                    "view-refresh-symbolic",
-                    text,
-                    Some(
-                        widget::button::standard("Refresh Menu Entry")
-                            .id(widget::Id::new("app.sync-menu"))
-                            .on_press_maybe((!busy).then(|| Message::SyncMenu(vec![a.id.clone()])))
-                            .into(),
-                    ),
-                ),
-            );
         }
         if let Some(f) = &a.flatpak {
             col = col.push(self.banner(
@@ -1391,10 +1414,9 @@ impl App {
         }
         info = info.add(
             widget::settings::item::builder("Version")
-                .description(match (&a.version, &a.menu_version) {
-                    (Some(v), Some(m)) if v != m => format!("{v} (file) · {m} (menu entry)"),
-                    (Some(v), _) => format!("{v}, read from the AppImage"),
-                    (None, _) => "The AppImage does not state its version".into(),
+                .description(match &a.version {
+                    Some(v) => format!("{v}, read from the AppImage"),
+                    None => "The AppImage does not state its version".into(),
                 })
                 .control(widget::text::caption("")),
         );
@@ -1582,7 +1604,7 @@ impl App {
             widget::row::with_capacity(2)
                 .spacing(12)
                 .align_y(Alignment::Center)
-                .push(widget::column::with_capacity(2).width(Length::Fill).push(widget::text::heading("Reload metadata")).push(wrap("Rewrite the menu entry's name, version and icon from the AppImage. Useful after the app updated itself. Your arguments, environment and custom icon stay.")))
+                .push(widget::column::with_capacity(2).width(Length::Fill).push(widget::text::heading("Reload metadata")).push(wrap("Rewrite the menu entry's name, icon and window matching from the AppImage. Useful when an app changed its name or icon after updating itself. Your arguments, environment and custom icon stay.")))
                 .push(widget::button::standard("Reload").id(widget::Id::new("app.reload")).on_press_maybe((!busy).then(|| Message::SyncMenu(vec![a.id.clone()])))),
         ));
         widget::scrollable(widget::container(col).center_x(Length::Fill))
@@ -1986,6 +2008,21 @@ impl App {
         for n in &o.notes {
             col = col.push(wrap(n.clone()));
         }
+        for id in o
+            .replaced
+            .iter()
+            .filter(|_| !gearlever_cosmic::host::sandboxed())
+        {
+            if let Some(a) = self.app(id)
+                && self.running.get(id).is_some_and(|r| r.old_version)
+            {
+                col = col.push(
+                    widget::button::suggested(format!("Relaunch {}", a.name))
+                        .id(widget::Id::new("result.relaunch"))
+                        .on_press_maybe((!self.busy()).then(|| Message::AskRelaunch(id.clone()))),
+                );
+            }
+        }
         if let Some(l) = &o.log {
             col = col.push(widget::text::caption(format!(
                 "Report: {}",
@@ -2088,7 +2125,6 @@ impl cosmic::Application for App {
                         && zbus::names::WellKnownName::try_from(n.as_str()).is_ok()
                 })
                 .unwrap_or_else(gearlever_cosmic::ui_client::new_instance),
-            synced_once: false,
             flags,
         };
         let title = app.set_window_title(
@@ -2168,9 +2204,22 @@ impl cosmic::Application for App {
             .add(widget::settings::item::builder("Use safe mechanisms to load metadata").description("Never run an AppImage to read its metadata. Off lets DwarFS images be read by running them.").toggler(s.safe_metadata, set(SettingChange::SafeMetadata)));
         let updates = widget::settings::section()
             .title("Updates")
-            .add(widget::settings::item::builder("Check for updates after login").description("Sends a notification; installs nothing").toggler(s.check_updates_on_startup, set(SettingChange::CheckOnStartup)))
-            .add(widget::settings::item::builder("Keep replaced versions in the Trash").description("Restore an older version from the Trash if an update misbehaves").toggler(s.keep_replaced_versions_in_trash, set(SettingChange::KeepReplaced)))
-            .add(widget::settings::item::builder("Keep menu entries in sync").description("When an AppImage changed on disk, refresh the version and icon of menu entries Gear Lever COSMIC wrote. Others are only flagged.").toggler(s.sync_menu_entries, set(SettingChange::SyncMenus)));
+            .add(
+                widget::settings::item::builder("Check for updates after login")
+                    .description("Sends a notification; installs nothing")
+                    .toggler(
+                        s.check_updates_on_startup,
+                        set(SettingChange::CheckOnStartup),
+                    ),
+            )
+            .add(
+                widget::settings::item::builder("Keep replaced versions in the Trash")
+                    .description("Restore an older version from the Trash if an update misbehaves")
+                    .toggler(
+                        s.keep_replaced_versions_in_trash,
+                        set(SettingChange::KeepReplaced),
+                    ),
+            );
         let theme = Some(s.theme);
         let appearance = widget::settings::section()
             .title("Appearance")
@@ -2485,6 +2534,16 @@ impl cosmic::Application for App {
                     .primary_action(widget::button::suggested("Continue").id(widget::Id::new("dialog.confirm")).on_press(Message::Confirm))
                     .into()
             }
+            Dialog::Relaunch(a) => widget::dialog()
+                .title(format!("Relaunch {}?", a.name))
+                .body(if self.is_self(a) {
+                    "Gear Lever COSMIC closes and opens again with the new version.".to_string()
+                } else {
+                    format!("{0} is asked to quit, as when you log out, and then started from the new version. If {0} asks to save your work or does not quit, it keeps running and is not started twice.", a.name)
+                })
+                .secondary_action(cancel())
+                .primary_action(widget::button::suggested("Relaunch").id(widget::Id::new("dialog.confirm")).on_press(Message::Confirm))
+                .into(),
             Dialog::About => widget::dialog()
                 .title("Gear Lever COSMIC")
                 .icon(
@@ -2563,28 +2622,6 @@ impl cosmic::Application for App {
                 let mut tasks = vec![];
                 if let Some(p) = self.flags.preview.take() {
                     tasks.push(self.preview(p));
-                }
-                // Gear Lever issue #497: fix menu entries left behind by
-                // self-updates, once per start (not in test instances). Only
-                // entries this app wrote; Gear Lever's own entries and ones the
-                // app made itself are flagged and fixed on request only.
-                if !self.synced_once && self.settings.sync_menu_entries && !self.isolated {
-                    self.synced_once = true;
-                    let outdated: Vec<AppItem> = self
-                        .inventory
-                        .apps
-                        .iter()
-                        .filter(|a| {
-                            a.menu_outdated
-                                .iter()
-                                .any(|o| o == "version" || o == "name")
-                                && a.managed_by == ManagedBy::GearLeverCosmic
-                        })
-                        .cloned()
-                        .collect();
-                    if !outdated.is_empty() {
-                        tasks.push(self.run_ops(vec![Operation::SyncMenu(outdated)]));
-                    }
                 }
                 if self.page == Page::Updates
                     && !self.checked_all_once
@@ -2668,6 +2705,21 @@ impl cosmic::Application for App {
                     ]);
                 }
             }
+            Message::AskRelaunch(id) => {
+                if let Some(a) = self.app(&id).cloned() {
+                    self.dialog = Some(Dialog::Relaunch(Box::new(a)));
+                }
+            }
+            Message::Relaunched(r) => {
+                let t = match r {
+                    Ok(text) => self.toast(text),
+                    Err(e) => {
+                        self.notice = Some(e);
+                        Task::none()
+                    }
+                };
+                return Task::batch([t, self.refresh()]);
+            }
             Message::Launched(r) => {
                 if let Err(e) = r {
                     self.notice = Some(e);
@@ -2697,6 +2749,7 @@ impl cosmic::Application for App {
             Message::Confirm => match self.dialog.take() {
                 Some(Dialog::Remove(apps)) => return self.run_ops(vec![Operation::Remove(apps)]),
                 Some(Dialog::Confirm(op, _)) => return self.run_ops(vec![*op]),
+                Some(Dialog::Relaunch(a)) => return self.relaunch(*a),
                 _ => {}
             },
             Message::CloseDialog => self.dialog = None,
@@ -2881,6 +2934,11 @@ impl cosmic::Application for App {
                     .as_ref()
                     .map(|j| j.title.clone())
                     .unwrap_or_default();
+                let replacing = self
+                    .job
+                    .as_ref()
+                    .map(|j| j.replacing.clone())
+                    .unwrap_or_default();
                 let stop;
                 let outcome = match *result {
                     Ok(r) => {
@@ -2893,8 +2951,12 @@ impl cosmic::Application for App {
                             notes: vec![],
                             errors: vec![],
                             log: None,
+                            replaced: vec![],
                         });
                         o.ok &= ok;
+                        if ok {
+                            o.replaced.extend(replacing);
+                        }
                         o.steps.extend(r.steps);
                         o.notes.extend(
                             r.notes
@@ -2914,6 +2976,7 @@ impl cosmic::Application for App {
                             notes: vec![],
                             errors: vec![e],
                             log: None,
+                            replaced: vec![],
                         }
                     }
                 };

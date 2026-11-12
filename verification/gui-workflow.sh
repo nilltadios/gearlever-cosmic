@@ -45,6 +45,10 @@ ui() { "$cli" ui --instance "$instance" "$@"; }
 state() { ui inspect | python3 -c "import json,sys; s=json.load(sys.stdin)['data']['state']; print(eval(sys.argv[1]))" "$1"; }
 ui wait --timeout 30 >/dev/null
 ok "window started ($instance)"
+# Renders are only worth looking at when the window found its icons.
+missing=$(state "s['icons_missing']")
+[[ $missing == "[]" ]] || fail "icons not found by the window (theme $(state "s['icon_theme']")): $missing"
+ok "all window icons resolve (theme $(state "s['icon_theme']"))"
 [[ $(state "[a['id'] for a in s['view']['apps']]") == "['demo_editor', 'old_tool']" ]] || fail "apps listed"
 ui activate apps.select:demo_editor >/dev/null; ui wait --timeout 30 >/dev/null
 [[ $(state "s['view']['apps'][0]['running'] is not None") == True ]] || fail "running badge"
@@ -65,6 +69,31 @@ kill -0 "$app_pid" || fail "the running app was stopped"
 [[ "$(readlink /proc/$app_pid/exe)" == *"(deleted)" ]] || fail "running app should keep the old file"
 ui capture "$out/3-after-update.png" >/dev/null
 ok "updated from the GUI while running; app kept running; note shown; render 3-after-update.png"
+
+# Relaunch: offered in the result and on the app page, asks first, needs --apply,
+# then the old instance quits and the new file runs.
+[[ $(state "[c['id'] for c in s['controls']]") == *"result.relaunch"* ]] || fail "the update result should offer Relaunch"
+ui navigate apps >/dev/null; ui activate apps.select:demo_editor >/dev/null; ui wait --timeout 30 >/dev/null
+[[ $(state "[c['id'] for c in s['controls']]") == *"app.relaunch"* ]] || fail "the app page should offer Relaunch"
+ui capture "$out/3a-app-old-version.png" >/dev/null
+ui activate app.relaunch >/dev/null
+[[ $(state "s['dialog']['kind']") == relaunch ]] || fail "relaunch dialog"
+ui capture "$out/3b-relaunch-dialog.png" >/dev/null
+ui activate dialog.confirm 2>/dev/null && fail "relaunch confirm must need --apply"
+ui activate dialog.confirm --apply >/dev/null
+for _ in $(seq 1 60); do kill -0 "$app_pid" 2>/dev/null || break; sleep 0.25; done
+kill -0 "$app_pid" 2>/dev/null && fail "the old instance should have quit"
+new_pid=""
+for _ in $(seq 1 40); do
+  for d in /proc/[0-9]*; do [[ "$(readlink "$d/exe" 2>/dev/null)" == "$H/AppImages/demo_editor.appimage" ]] && new_pid=${d#/proc/}; done
+  [[ -n $new_pid ]] && break; sleep 0.25
+done
+[[ -n $new_pid ]] || fail "the new version should be running after Relaunch"
+pids+=("$new_pid")
+sleep 1; ui wait --timeout 30 >/dev/null
+[[ $(state "s['view']['apps'][0]['running']['old_version']") == False ]] || fail "after relaunch nothing should run the old file"
+ui capture "$out/3c-after-relaunch.png" >/dev/null
+ok "Relaunch asked first, needed --apply, stopped the old instance (pid $app_pid) and started the new file (pid $new_pid); renders 3a, 3b, 3c"
 
 # Add page: open a file like the file chooser/drop would.
 ui open "$D/Sky-Notes-2.0.0.AppImage" "$D/fake.AppImage" >/dev/null; sleep 0.5; ui wait --timeout 30 >/dev/null

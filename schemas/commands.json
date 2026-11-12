@@ -2,7 +2,7 @@
   "commands": [
     {
       "command": "app.list",
-      "description": "List integrated AppImages with the version read from each file, the menu entry's version, whether the menu entry is outdated, update source, and running state (pids; old_version means a replaced file is still running).",
+      "description": "List integrated AppImages with the version read from each file, update source, and running state (pids; old_version means a replaced file is still running; the window offers Relaunch).",
       "dry_run_by_default": false,
       "example": {
         "search": ""
@@ -12,11 +12,6 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
-          "outdated_menu": {
-            "default": false,
-            "description": "Only apps whose menu entry no longer matches the file.",
-            "type": "boolean"
-          },
           "search": {
             "default": "",
             "description": "Case-insensitive filter on name, id and path.",
@@ -651,7 +646,7 @@
     },
     {
       "command": "app.sync-menu",
-      "description": "Rewrite menu entries from each AppImage's own metadata (name, version, icon), keeping arguments and environment. Empty apps = every app whose menu entry is outdated. Gear Lever's \"Reload metadata\".",
+      "description": "Rewrite menu entries from each AppImage's own metadata (name, icon, window matching), keeping arguments and environment. Empty apps = every integrated app. Gear Lever's \"Reload metadata\".",
       "dry_run_by_default": true,
       "example": {
         "apps": []
@@ -885,6 +880,30 @@
           "settings"
         ],
         "title": "SettingsSet",
+        "type": "object"
+      }
+    },
+    {
+      "command": "cli.link",
+      "description": "Put the CLI on PATH as ~/.local/bin/gearlever-cosmic-cli (a link to this AppImage or the native CLI), or remove that link. A file of that name that is not a link to Gear Lever COSMIC is never replaced. settings.get shows the link as cli_link. Gear Lever COSMIC creates it when it adds itself to the app menu.",
+      "dry_run_by_default": true,
+      "example": {
+        "enabled": true
+      },
+      "mutates": true,
+      "params_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "description": "true: link ~/.local/bin/gearlever-cosmic-cli to this AppImage (or the\nnative CLI). false: move the link to the Trash.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "CliLink",
         "type": "object"
       }
     },

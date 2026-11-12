@@ -31,7 +31,7 @@ Run every command as:  gearlever-cosmic-cli ...
 
 Common tasks
    What is installed, real versions:   run --cmd 'app.list={}'
-   Menu entries showing a wrong version: run --cmd 'app.list={"outdated_menu":true}'
+   Running a replaced version:         run --cmd 'app.list={}'   (running.old_version)
    Check for updates (honest):         run --cmd 'update.check={}'
        status: available | up_to_date | self_updating | no_source | not_found | failed
        no_source and failed never mean "up to date"; self_updating means the app

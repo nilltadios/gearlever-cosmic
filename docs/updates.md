@@ -30,7 +30,9 @@ The new file is downloaded beside the old one (`.NAME.download-…`), its size a
 
 ## Apps that update themselves
 
-When an app replaces its own file (electron-updater does this), its menu entry would keep the old version (Gear Lever issue #497). Versions here always come from the file itself; outdated menu entries are flagged (`menu_outdated`) and refreshed automatically on start when "Keep menu entries in sync" is on — only for entries Gear Lever COSMIC wrote; entries written by Gear Lever or by the app itself are flagged and refreshed only on request (the app page's Refresh Menu Entry, or `app.sync-menu`).
+When an app replaces its own file (electron-updater does this), a version stored in its menu entry would go stale (Gear Lever issue #497). Versions here always come from the file itself, and the menu entries Gear Lever COSMIC writes carry no `X-AppImage-Version`, so there is nothing to keep in sync. If an app changes its name or icon in an update, the app page's Reload (or `app.sync-menu`) rewrites the menu entry from the file.
+
+An update never closes a running app. When an instance still runs the replaced file, the app page and the update result offer **Relaunch**: after a confirmation, the app's own processes (recognized by `APPIMAGE`/`APPDIR` and a program inside the mount) get SIGTERM, as at logout. Once they have exited (within 20 seconds), the new file is started from its menu entry. Nothing is force-killed: an app that asks to save work or does not quit keeps running and is not started twice. Gear Lever COSMIC relaunching itself closes and starts the new file. Relaunch is not available in the Flatpak.
 
 ## Startup check
 

@@ -12,13 +12,15 @@ pub fn sandboxed() -> bool {
 }
 
 /// Programs that may run on the host. Anything else is refused.
-pub const HOST_PROGRAMS: [&str; 6] = [
+pub const HOST_PROGRAMS: [&str; 7] = [
     "gio",
     "xdg-open",
     "setsid",
     "ps",
     "update-desktop-database",
     "notify-send",
+    // Only SIGTERM to an app's own processes, for Relaunch (see relaunch.rs).
+    "kill",
 ];
 
 pub fn command(program: &str) -> Command {
