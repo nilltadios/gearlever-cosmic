@@ -880,72 +880,112 @@ fn ftp_connect(url: &str) -> Result<suppaftp::FtpStream, String> {
         suppaftp::FtpStream::connect(&addr).map_err(|e| format!("Cannot reach {host}: {e}"))?;
     ftp.login("anonymous", "")
         .map_err(|e| format!("{host} refused anonymous login: {e}"))?;
+    // Binary mode for downloads and for SIZE, which servers such as
+    // pyftpdlib refuse in ASCII mode ("550 SIZE not allowed in ASCII mode").
+    ftp.transfer_type(suppaftp::types::FileType::Binary)
+        .map_err(|e| format!("{host} refused binary mode: {e}"))?;
     Ok(ftp)
+}
+
+/// What `ftp_search` needs from an FTP server, so the search can be tested
+/// without one.
+trait FtpListing {
+    /// The names in `dir`, empty when it cannot be listed.
+    fn names(&mut self, dir: &str) -> Vec<String>;
+    /// The size of the file at `path`, None when it is not a readable file.
+    fn file_size(&mut self, path: &str) -> Option<u64>;
+}
+
+impl FtpListing for suppaftp::FtpStream {
+    fn names(&mut self, dir: &str) -> Vec<String> {
+        self.nlst(Some(dir)).unwrap_or_default()
+    }
+    fn file_size(&mut self, path: &str) -> Option<u64> {
+        self.size(path).ok().map(|s| s as u64)
+    }
+}
+
+/// The file an FTP pattern such as `/pub/app/*/App-*.AppImage` names, and
+/// its size. At every level the highest name in natural order comes first,
+/// so the newest folder that has files matching the last part decides. In
+/// it, the file for `arch` (or one naming no architecture) is taken, not the
+/// highest name: `x86_64` sorts above `aarch64`. When that folder's matching
+/// files are all for other architectures, older folders are not searched,
+/// as with releases (`Lookup::OtherArch`).
+fn ftp_search(
+    ftp: &mut impl FtpListing,
+    pattern: &str,
+    arch: &str,
+) -> Result<Option<(String, Option<u64>)>, Lookup> {
+    let parts: Vec<&str> = pattern.split('/').filter(|p| !p.is_empty()).collect();
+    let Some((file_part, dir_parts)) = parts.split_last() else {
+        return Ok(None);
+    };
+    let join = |dir: &str, name: &str| format!("{}/{name}", dir.trim_end_matches('/'));
+    // The names in `dir` matching `part`, highest first.
+    fn matching(ftp: &mut impl FtpListing, dir: &str, part: &str) -> Vec<String> {
+        let mut names: Vec<String> = ftp
+            .names(dir)
+            .into_iter()
+            .map(|n| n.rsplit('/').next().unwrap_or(&n).to_string())
+            .filter(|n| glob_match(part, n))
+            .collect();
+        names.sort_by(|a, b| natural_cmp(b, a));
+        names
+    }
+    let start = dir_parts
+        .iter()
+        .position(|p| p.contains(['*', '?', '[']))
+        .unwrap_or(dir_parts.len());
+    let mut dirs = vec![format!("/{}", dir_parts[..start].join("/"))];
+    for part in &dir_parts[start..] {
+        let next: Vec<String> = dirs
+            .iter()
+            .flat_map(|dir| {
+                matching(ftp, dir, part)
+                    .into_iter()
+                    .map(|n| join(dir, &n))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if next.is_empty() {
+            return Ok(None);
+        }
+        dirs = next;
+    }
+    for dir in &dirs {
+        let names = matching(ftp, dir, file_part);
+        if names.is_empty() {
+            continue;
+        }
+        let usable: Vec<&String> = names
+            .iter()
+            .filter(|n| arch_in_name(n) == Some(arch))
+            .chain(names.iter().filter(|n| arch_in_name(n).is_none()))
+            .collect();
+        if usable.is_empty() {
+            return Err(Lookup::OtherArch {
+                arch: arch.to_string(),
+                offered: names,
+            });
+        }
+        for n in usable {
+            let full = join(dir, n);
+            if let Some(size) = ftp.file_size(&full) {
+                return Ok(Some((full, Some(size))));
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn ftp_find(url: &str, pattern: &str, arch: &str) -> Result<Option<Found>, Lookup> {
     let mut ftp = ftp_connect(url)?;
-    let parts: Vec<&str> = pattern.split('/').filter(|p| !p.is_empty()).collect();
-    let first_wild = parts.iter().position(|p| p.contains(['*', '?', '[']));
-    let mut candidates = vec![String::new()];
-    let start = first_wild.unwrap_or(parts.len().saturating_sub(1));
-    let base = format!("/{}", parts[..start].join("/"));
-    candidates[0] = base;
-    for (i, part) in parts.iter().enumerate().skip(start) {
-        let last = i == parts.len() - 1;
-        let mut next = Vec::new();
-        for dir in &candidates {
-            let names = ftp.nlst(Some(dir)).unwrap_or_default();
-            let mut names: Vec<String> = names
-                .into_iter()
-                .map(|n| n.rsplit('/').next().unwrap_or(&n).to_string())
-                .filter(|n| glob_match(part, n))
-                .collect();
-            // Newest-looking names last in natural order; take the highest.
-            names.sort_by(|a, b| natural_cmp(b, a));
-            if last && !names.is_empty() {
-                // The file for this architecture (or one naming none), not
-                // the highest name: `x86_64` sorts above `aarch64`.
-                let named = |want: Option<&str>| {
-                    names
-                        .iter()
-                        .filter(|n| arch_in_name(n) == want)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                };
-                let mut usable = named(Some(arch));
-                usable.extend(named(None));
-                if usable.is_empty() {
-                    return Err(Lookup::OtherArch {
-                        arch: arch.to_string(),
-                        offered: names,
-                    });
-                }
-                names = usable;
-            }
-            for n in names {
-                let full = format!("{}/{n}", dir.trim_end_matches('/'));
-                if last {
-                    if let Ok(size) = ftp.size(&full) {
-                        next.push(full);
-                        let _ = size;
-                        break;
-                    }
-                } else {
-                    next.push(full);
-                }
-            }
-        }
-        candidates = next;
-        if candidates.is_empty() {
-            return Ok(None);
-        }
-    }
-    let Some(file) = candidates.first() else {
+    let found = ftp_search(&mut ftp, pattern, arch)?;
+    let _ = ftp.quit();
+    let Some((file, size)) = found else {
         return Ok(None);
     };
-    let size = ftp.size(file).ok().map(|s| s as u64);
-    let _ = ftp.quit();
     Ok(Some(Found {
         download: Download {
             url: format!("{}{file}", url.trim_end_matches('/')),
@@ -1356,8 +1396,6 @@ pub fn download(
             let rest = d.url.trim_start_matches("ftp://");
             let (host, path) = rest.split_once('/').ok_or("Invalid FTP URL")?;
             let mut ftp = ftp_connect(&format!("ftp://{host}"))?;
-            ftp.transfer_type(suppaftp::types::FileType::Binary)
-                .map_err(|e| e.to_string())?;
             let mut data = Vec::new();
             ftp.retr(&format!("/{path}"), |r| {
                 r.read_to_end(&mut data)
@@ -1617,6 +1655,80 @@ mod tests {
             check.message,
             "No aarch64 file in the newest release: the files matching the name pattern are for other architectures (App-2.0-x86_64.AppImage)."
         );
+    }
+    /// An FTP server holding these files (full paths); every file has a size.
+    struct FakeFtp(&'static [&'static str]);
+    impl FtpListing for FakeFtp {
+        fn names(&mut self, dir: &str) -> Vec<String> {
+            let prefix = format!("{}/", dir.trim_end_matches('/'));
+            let mut names: Vec<String> = self
+                .0
+                .iter()
+                .filter_map(|p| p.strip_prefix(&prefix))
+                .map(|rest| rest.split('/').next().unwrap_or(rest).to_string())
+                .collect();
+            names.sort();
+            names.dedup();
+            names
+        }
+        fn file_size(&mut self, path: &str) -> Option<u64> {
+            self.0.contains(&path).then_some(path.len() as u64)
+        }
+    }
+    #[test]
+    fn ftp_folders_are_searched_newest_first_for_this_architecture() {
+        let search = |files: &'static [&'static str], pattern: &str, arch: &str| {
+            ftp_search(&mut FakeFtp(files), pattern, arch)
+        };
+        let file = |r: Result<Option<(String, Option<u64>)>, Lookup>| r.unwrap().map(|f| f.0);
+        // One folder: the file for this architecture, not the highest name.
+        let flat: &'static [&'static str] =
+            &["/f/App-1.1-aarch64.AppImage", "/f/App-1.1-x86_64.AppImage"];
+        assert_eq!(
+            file(search(flat, "/f/App-*.AppImage", "aarch64")).as_deref(),
+            Some("/f/App-1.1-aarch64.AppImage")
+        );
+        // Version folders: an older folder with only another architecture's
+        // file does not hide the newest folder's file for this one.
+        let versions: &'static [&'static str] = &[
+            "/pub/app/1.9/App-1.9-x86_64.AppImage",
+            "/pub/app/1.10/App-1.10-aarch64.AppImage",
+            "/pub/app/1.10/App-1.10-x86_64.AppImage",
+            "/pub/app/1.0/App-1.0-aarch64.AppImage",
+        ];
+        assert_eq!(
+            file(search(versions, "/pub/app/*/App-*.AppImage", "aarch64")).as_deref(),
+            Some("/pub/app/1.10/App-1.10-aarch64.AppImage")
+        );
+        assert_eq!(
+            file(search(versions, "/pub/app/*/App-*.AppImage", "x86_64")).as_deref(),
+            Some("/pub/app/1.10/App-1.10-x86_64.AppImage")
+        );
+        // A newer folder without a matching file is passed over.
+        let empty_newest: &'static [&'static str] =
+            &["/p/3.0/notes.txt", "/p/2.0/App-2.0-aarch64.AppImage"];
+        assert_eq!(
+            file(search(empty_newest, "/p/*/App-*.AppImage", "aarch64")).as_deref(),
+            Some("/p/2.0/App-2.0-aarch64.AppImage")
+        );
+        // The newest folder with matching files has none for this
+        // architecture: not found, and an older version is not offered.
+        let other_newest: &'static [&'static str] = &[
+            "/p/2.0/App-2.0-x86_64.AppImage",
+            "/p/1.0/App-1.0-aarch64.AppImage",
+        ];
+        match search(other_newest, "/p/*/App-*.AppImage", "aarch64") {
+            Err(Lookup::OtherArch { arch, offered }) => {
+                assert_eq!(arch, "aarch64");
+                assert_eq!(offered, ["App-2.0-x86_64.AppImage"]);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            search(flat, "/f/Other-*.AppImage", "aarch64"),
+            Ok(None)
+        ));
+        assert!(matches!(search(flat, "", "aarch64"), Ok(None)));
     }
     #[test]
     fn electron_feeds_are_named_for_the_architecture() {
