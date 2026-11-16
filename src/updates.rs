@@ -690,10 +690,9 @@ fn split_repo_url(url: &str) -> Result<(String, String), String> {
     if path.split('/').count() < 2 {
         return Err("The project URL needs OWNER/REPO after the host".into());
     }
-    Ok((
-        format!("{}://{}", u.scheme(), u.host_str().unwrap_or_default()),
-        path,
-    ))
+    // The origin keeps a port that is not the scheme's default
+    // (`https://git.example.org:3000`).
+    Ok((u.origin().ascii_serialization(), path))
 }
 
 fn find_from_source(source: &Source, arch: &str) -> Result<Option<Found>, String> {
@@ -1467,6 +1466,22 @@ mod tests {
         let ppc = ["App-ppc64le.AppImage", "App.AppImage"];
         assert_eq!(pick("aarch64", &ppc), Some("App.AppImage"));
         assert!(natural_cmp("app-1.10", "app-1.9").is_gt());
+    }
+    #[test]
+    fn repository_urls_keep_their_port() {
+        assert_eq!(
+            split_repo_url("https://git.example.org:3000/owner/repo").unwrap(),
+            ("https://git.example.org:3000".into(), "owner/repo".into())
+        );
+        assert_eq!(
+            split_repo_url("http://127.0.0.1:20321/owner/repo.git").unwrap(),
+            ("http://127.0.0.1:20321".into(), "owner/repo".into())
+        );
+        assert_eq!(
+            split_repo_url("https://gitlab.com:443/group/project/").unwrap(),
+            ("https://gitlab.com".into(), "group/project".into())
+        );
+        assert!(split_repo_url("https://gitlab.com/onlyone").is_err());
     }
     #[test]
     fn an_update_for_another_architecture_is_refused() {
