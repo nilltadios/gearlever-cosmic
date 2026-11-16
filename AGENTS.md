@@ -1,6 +1,6 @@
 # Gear Lever COSMIC
 
-A Rust/libcosmic AppImage manager, distributed as an AppImage built with Anylinux tooling (quick-sharun + uruntime, DwarFS). Rust 1.99.1 and every crate, including libcosmic's Git revision, are pinned in `rust-toolchain.toml` and `Cargo.lock`.
+A Rust/libcosmic AppImage manager, distributed as x86_64 and aarch64 AppImages built with Anylinux tooling (quick-sharun + uruntime, DwarFS). Rust 1.99.1 and every crate, including libcosmic's Git revision, are pinned in `rust-toolchain.toml` and `Cargo.lock`.
 
 ## Launch and inspect
 
@@ -8,7 +8,7 @@ A Rust/libcosmic AppImage manager, distributed as an AppImage built with Anylinu
 cargo build --bins
 target/debug/gearlever-cosmic --preview PAGE --capture /absolute/new.png   # render and exit
 target/debug/gearlever-cosmic-cli guide
-dist/GearLever_COSMIC-*-x86_64.AppImage cli commands --json
+dist/GearLever_COSMIC-*-$(uname -m).AppImage cli commands --json
 ```
 
 When opening the app for someone to use, leave that window open. Test windows use `ui start --config-dir DIR` (isolated) or `--capture`, and are closed afterwards. Never interrupt a window or operation you did not start.

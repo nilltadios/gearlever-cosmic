@@ -9,7 +9,7 @@ For each app the first available source is used:
 3. **Embedded update information** (`.upd_info` in the AppImage): `gh-releases-zsync|…` or `zsync|URL`.
 4. **The app's own updater**: electron-updater (`resources/app-update.yml`). For the `github` and `generic` providers its feed (`latest-linux.yml`) is read.
 
-Source types and fields (Gear Lever's names, so its saved settings and `--set-update-source` options carry over): `StaticFileUpdater` (url), `GithubUpdater` (repo, repo_filename, allow_prereleases), `GitlabUpdater` (repo_url, repo_filename), `CodebergUpdater` (repo, repo_filename, allow_prereleases), `ForgejoUpdater` (repo_url, repo_filename, allow_prereleases), `FTPUpdater` (url, filename). `repo_filename` is a glob; with several matches the one for this machine's architecture is chosen. Set `GITHUB_TOKEN` to raise GitHub's API rate limit.
+Source types and fields (Gear Lever's names, so its saved settings and `--set-update-source` options carry over): `StaticFileUpdater` (url), `GithubUpdater` (repo, repo_filename, allow_prereleases), `GitlabUpdater` (repo_url, repo_filename), `CodebergUpdater` (repo, repo_filename, allow_prereleases), `ForgejoUpdater` (repo_url, repo_filename, allow_prereleases), `FTPUpdater` (url, filename). `repo_filename` is a glob; with several matches the file named for the installed AppImage's architecture is chosen (an x86_64 AppImage kept on an ARM computer stays x86_64), else one whose name gives no architecture. A downloaded file built for a different architecture than the installed one is refused before anything is replaced. Set `GITHUB_TOKEN` to raise GitHub's API rate limit.
 
 ## Statuses
 

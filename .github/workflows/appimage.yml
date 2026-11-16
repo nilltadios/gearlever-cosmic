@@ -14,7 +14,16 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     # Same environment as packaging/Containerfile. The AppImage bundles its
     # own glibc (sharun), so the build distribution does not limit where it runs.
     container:
@@ -38,8 +47,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
-          restore-keys: cargo-
+          key: cargo-${{ matrix.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: cargo-${{ matrix.arch }}-
       - name: Format, lint, test
         run: |
           cargo fmt --all --check
@@ -55,13 +64,13 @@ jobs:
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
-          app=$(ls dist/*.AppImage)
+          app=$(ls dist/*-${{ matrix.arch }}.AppImage)
           "$app" cli --version
           "$app" cli commands --json > /dev/null
           HOME="$(mktemp -d)" "$app" cli run --cmd 'app.list={}' > /dev/null
       - uses: actions/upload-artifact@v7
         with:
-          name: gearlever-cosmic-x86_64
+          name: gearlever-cosmic-${{ matrix.arch }}
           path: |
             dist/*.AppImage
             dist/*.zsync
@@ -77,8 +86,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
-          name: gearlever-cosmic-x86_64
+          pattern: gearlever-cosmic-*
+          merge-multiple: true
           path: dist
+      - name: Both architectures are present
+        run: |
+          for arch in x86_64 aarch64; do
+            ls dist/GearLever_COSMIC-*-"$arch".AppImage dist/GearLever_COSMIC-*-"$arch".AppImage.zsync dist/GearLever_COSMIC-*-"$arch".AppImage.sha256
+          done
       - name: Publish a release for a new version
         env:
           GH_TOKEN: ${{ github.token }}

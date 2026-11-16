@@ -120,7 +120,7 @@ mod tests {
     }
 
     /// The guide and bundled docs show the command that really starts the
-    /// CLI. Release files are named GearLever_COSMIC-VERSION-x86_64.AppImage
+    /// CLI. Release files are named GearLever_COSMIC-VERSION-ARCH.AppImage
     /// and users rename them, so no text may name one fixed file.
     #[test]
     fn bundled_texts_name_the_real_cli_command() {

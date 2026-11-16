@@ -974,9 +974,13 @@ fn run(
             ));
             let verified =
                 updates::download(download, &staging, &|f| job.fraction(f), &job.cancel)?;
-            report
-                .steps
-                .push(format!("Downloaded and checked: {}", verified.join(", ")));
+            let arch = updates::check_same_arch(&app.path, &staging).inspect_err(|_| {
+                let _ = fs::remove_file(&staging);
+            })?;
+            report.steps.push(format!(
+                "Downloaded and checked: {}, {arch}",
+                verified.join(", ")
+            ));
             job.check().inspect_err(|_| {
                 let _ = fs::remove_file(&staging);
             })?;

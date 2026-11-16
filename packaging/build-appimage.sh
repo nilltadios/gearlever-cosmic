@@ -6,7 +6,9 @@
 #
 # Usage: packaging/build-appimage.sh [BIN_DIR] [OUT_DIR]
 #   BIN_DIR  folder with release gearlever-cosmic and gearlever-cosmic-cli (default target/release)
-#   OUT_DIR  output folder (default dist): GearLever_COSMIC-VERSION-x86_64.AppImage, .zsync, .sha256
+#   OUT_DIR  output folder (default dist): GearLever_COSMIC-VERSION-ARCH.AppImage, .zsync, .sha256
+# ARCH is this machine's (uname -m): x86_64 or aarch64. Build each on its own
+# architecture; the binaries in BIN_DIR must match it.
 # quick-sharun is pinned to a commit and checked by SHA-256; it pins and
 # checks the sharun, appimagetool (uruntime) and onelf it downloads.
 # To move to the newest quick-sharun, update QS_COMMIT and QS_SHA (see
@@ -26,7 +28,7 @@ out="$(realpath -m "${2:-dist}")"
 # Every tool this script and quick-sharun need, checked before any work so a
 # missing one is reported with the install command for this distribution.
 # tool:package names for dnf, apt, pacman, zypper (when they differ).
-need=(awk cp curl env find grep install ldd mktemp mv patchelf rm sed sha256sum sleep strings tar tr)
+need=(awk cp curl env find grep install ldd mktemp mv od patchelf rm sed sha256sum sleep strings tar tr uname)
 missing=()
 for t in "${need[@]}"; do command -v "$t" >/dev/null || missing+=("$t"); done
 if ((${#missing[@]})); then
@@ -35,7 +37,7 @@ if ((${#missing[@]})); then
     case $t in
       strings) pkgs+=(binutils) ;;
       ldd) pkgs+=(glibc-common) ;; # Debian/Ubuntu: libc-bin; Arch: glibc
-      sha256sum|install|mktemp|cp|mv|rm|env|tr|sleep) pkgs+=(coreutils) ;;
+      sha256sum|install|mktemp|cp|mv|rm|env|tr|sleep|od|uname) pkgs+=(coreutils) ;;
       awk) pkgs+=(gawk) ;;
       find) pkgs+=(findutils) ;;
       *) pkgs+=("$t") ;;
@@ -89,9 +91,19 @@ chmod +x "$qs"
 # with settings embedded. REUSE_CHECK_DELAY=0: otherwise uruntime keeps its mount helper
 # alive for reuse, holding the caller's stdout open, so `out=$(AppImage cli ...)`
 # took about 6 s instead of 0.2 s.
-RT_URL=https://github.com/VHSgunzo/uruntime/releases/download/v0.8.1/uruntime-appimage-dwarfs-lite-x86_64
-RT_SHA=b3c2916153e089d703cee5a7ebc540941d2f1d71baa90eb3092b15eef48345a8
-rt_cache="$cache/uruntime-appimage-dwarfs-lite-v0.8.1-x86_64"
+arch=$(uname -m)
+case $arch in
+  x86_64) RT_SHA=b3c2916153e089d703cee5a7ebc540941d2f1d71baa90eb3092b15eef48345a8 ;;
+  aarch64) RT_SHA=c1641dfe465f4cb70ae545fbfb9de7a221aa6e9a0b1d7ea600b213a1f10738a0 ;;
+  *) echo "Unsupported architecture $arch: AppImages are built for x86_64 and aarch64" >&2; exit 1 ;;
+esac
+bin_arch=$(od -An -tx1 -j18 -N2 "$bin/gearlever-cosmic" | tr -d ' \n')
+case $arch:$bin_arch in
+  x86_64:3e00|aarch64:b700) ;;
+  *) echo "$bin/gearlever-cosmic is not built for $arch (ELF machine $bin_arch)" >&2; exit 1 ;;
+esac
+RT_URL=https://github.com/VHSgunzo/uruntime/releases/download/v0.8.1/uruntime-appimage-dwarfs-lite-$arch
+rt_cache="$cache/uruntime-appimage-dwarfs-lite-v0.8.1-$arch"
 if [[ ! -f $rt_cache ]] || ! echo "$RT_SHA  $rt_cache" | sha256sum -c --status; then
   curl -fsSL -o "$rt_cache.part" "$RT_URL"
   echo "$RT_SHA  $rt_cache.part" | sha256sum -c --status || { echo "uruntime checksum mismatch" >&2; rm -f "$rt_cache.part"; exit 1; }
@@ -105,9 +117,10 @@ export APPDIR="$work/AppDir"
 export DESKTOP="$work/$app.desktop"
 export ICON="$PWD/resources/$app.svg"
 export OUTPATH="$out"
-export OUTNAME="GearLever_COSMIC-$version-x86_64.AppImage"
-export UPINFO="${UPINFO:-gh-releases-zsync|${repo%%/*}|${repo#*/}|latest|GearLever_COSMIC-*-x86_64.AppImage.zsync}"
+export OUTNAME="GearLever_COSMIC-$version-$arch.AppImage"
+export UPINFO="${UPINFO:-gh-releases-zsync|${repo%%/*}|${repo#*/}|latest|GearLever_COSMIC-*-$arch.AppImage.zsync}"
 export MAIN_BIN=gearlever-cosmic
+export APPIMAGE_ARCH="$arch"
 # appimagetool writes X-AppImage-Version from VERSION ("UNKNOWN" if unset).
 export VERSION="$version"
 # Rendering is wgpu (Vulkan, then OpenGL) with a software fallback. Mesa is

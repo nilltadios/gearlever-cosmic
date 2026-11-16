@@ -426,31 +426,60 @@ fn glob_match(pattern: &str, name: &str) -> bool {
     glob::Pattern::new(pattern).is_ok_and(|p| p.matches(name))
 }
 
-/// Several assets match: prefer the one for this machine's architecture.
-fn pick<T>(items: Vec<&T>, name: impl Fn(&T) -> &str) -> Option<&T> {
+/// The architecture a release file name says it is for, named like
+/// `elf::arch_name`, or None when the name does not say.
+fn arch_in_name(name: &str) -> Option<&'static str> {
+    let n = name.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
+    if has(&["aarch64", "arm64"]) {
+        Some("aarch64")
+    } else if has(&["armv7", "armhf", "armel", "arm32"]) {
+        Some("armhf")
+    } else if has(&["x86_64", "x86-64", "amd64", "x64"]) {
+        Some("x86_64")
+    } else if has(&["i386", "i686"]) {
+        Some("i386")
+    } else {
+        None
+    }
+}
+
+/// Several assets match: the one named for `arch` (the installed file's),
+/// else one whose name gives no architecture, else the first. A file for another architecture is still refused before
+/// it replaces anything (`check_same_arch`).
+fn pick_for<'a, T>(arch: &str, items: Vec<&'a T>, name: impl Fn(&T) -> &str) -> Option<&'a T> {
     if items.len() <= 1 {
         return items.into_iter().next();
     }
-    let arch = crate::elf::host_arch();
-    let is_arm = |n: &str| {
-        let n = n.to_lowercase();
-        ["arm64", "aarch64", "armv7l", "armhf"]
+    let named = |want: Option<&str>| {
+        items
             .iter()
-            .any(|a| n.contains(a))
+            .find(|i| arch_in_name(name(i)) == want)
+            .copied()
     };
-    let is_x86 = |n: &str| {
-        let n = n.to_lowercase();
-        n.contains("x86_64") || n.contains("amd64") || n.contains("x86-64") || n.contains("x64")
-    };
-    items
-        .iter()
-        .find(|i| match arch {
-            "x86_64" => is_x86(name(i)) || !is_arm(name(i)),
-            "aarch64" => is_arm(name(i)),
-            _ => false,
-        })
-        .copied()
+    named(Some(arch))
+        .or_else(|| named(None))
         .or(items.first().copied())
+}
+
+/// An update must be built for the same architecture as the file it
+/// replaces: an aarch64 app never turns into an x86_64 one because a
+/// release's file pattern also matched the other build.
+/// Returns what was compared, for the operation report.
+pub fn check_same_arch(installed: &Path, new: &Path) -> Result<String, String> {
+    let arch = |p: &Path| crate::elf::read(p).map(|e| e.arch);
+    let (old, new) = (arch(installed)?, arch(new)?);
+    if old == "unknown" || new == "unknown" {
+        return Ok(format!(
+            "architecture not compared (installed {old}, new {new})"
+        ));
+    }
+    if old != new {
+        return Err(format!(
+            "The downloaded file is built for {new}, but the installed one is for {old}; nothing was replaced. Check the update source's file name pattern"
+        ));
+    }
+    Ok(format!("{new} like the installed file"))
 }
 
 /// A file's hash, cached beside its metadata while the file is unchanged.
@@ -587,6 +616,7 @@ fn from_release_list(
     pattern: &str,
     url_key: &str,
     zsync: bool,
+    arch: &str,
 ) -> Result<Option<Found>, String> {
     for release in releases {
         if release["draft"] == true {
@@ -601,7 +631,8 @@ fn from_release_list(
             .copied()
             .filter(|a| glob_match(pattern, a["name"].as_str().unwrap_or_default()))
             .collect();
-        let Some(asset) = pick(matching, |a| a["name"].as_str().unwrap_or_default()) else {
+        let Some(asset) = pick_for(arch, matching, |a| a["name"].as_str().unwrap_or_default())
+        else {
             continue;
         };
         let version = release["tag_name"]
@@ -646,7 +677,7 @@ fn split_repo_url(url: &str) -> Result<(String, String), String> {
     ))
 }
 
-fn find_from_source(source: &Source) -> Result<Option<Found>, String> {
+fn find_from_source(source: &Source, arch: &str) -> Result<Option<Found>, String> {
     match source {
         Source::StaticUrl { url } => Ok(Some(Found {
             download: Download {
@@ -669,6 +700,7 @@ fn find_from_source(source: &Source) -> Result<Option<Found>, String> {
             repo_filename,
             "browser_download_url",
             false,
+            arch,
         ),
         Source::Codeberg {
             repo,
@@ -686,6 +718,7 @@ fn find_from_source(source: &Source) -> Result<Option<Found>, String> {
                 repo_filename,
                 "browser_download_url",
                 false,
+                arch,
             )
         }
         Source::Forgejo {
@@ -711,6 +744,7 @@ fn find_from_source(source: &Source) -> Result<Option<Found>, String> {
                 repo_filename,
                 "browser_download_url",
                 false,
+                arch,
             )
         }
         Source::Gitlab {
@@ -733,7 +767,8 @@ fn find_from_source(source: &Source) -> Result<Option<Found>, String> {
                         .collect()
                 })
                 .unwrap_or_default();
-            let Some(link) = pick(links, |l| l["name"].as_str().unwrap_or_default()) else {
+            let Some(link) = pick_for(arch, links, |l| l["name"].as_str().unwrap_or_default())
+            else {
                 return Ok(None);
             };
             let url = link["direct_asset_url"]
@@ -865,7 +900,7 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 /// Turn embedded `.upd_info` into a lookup, the way AppImageUpdate reads it.
-fn find_embedded(info: &str) -> Result<Option<(Found, String)>, String> {
+fn find_embedded(info: &str, arch: &str) -> Result<Option<(Found, String)>, String> {
     let parts: Vec<&str> = info.split('|').collect();
     match parts.as_slice() {
         ["gh-releases-zsync", owner, repo, release, file] => {
@@ -878,7 +913,7 @@ fn find_embedded(info: &str) -> Result<Option<(Found, String)>, String> {
                 ))?]
             };
             Ok(
-                from_release_list(&releases, file, "browser_download_url", true)?
+                from_release_list(&releases, file, "browser_download_url", true, arch)?
                     .map(|f| (f, format!("GitHub {owner}/{repo}"))),
             )
         }
@@ -1080,18 +1115,24 @@ fn check_self_updater(meta: &Metadata, s: &SelfUpdater) -> Check {
 /// Decide what to check, in order: a custom source, Gear Lever's saved
 /// source, embedded update information, then the app's own updater.
 pub fn check(meta: &Metadata, source: Option<(&Source, Origin)>) -> Check {
+    // Files are picked for the installed file's architecture (an x86_64
+    // AppImage kept on an ARM computer stays x86_64), else this computer's.
+    let arch = match meta.arch.as_str() {
+        "" | "unknown" => crate::elf::host_arch(),
+        a => a,
+    };
     let self_note = meta.self_updater.as_ref().map(self_updater_label);
     let mut result = if let Some((source, origin)) = source {
         let mut c = run_check(
             meta,
-            find_from_source(source),
+            find_from_source(source, arch),
             source.manager().label.into(),
             Some(source.summary()),
         );
         c.origin = Some(origin);
         c
     } else if let Some(info) = &meta.update_info {
-        match find_embedded(info) {
+        match find_embedded(info, arch) {
             Ok(found) => {
                 let detail = found.as_ref().map(|(_, d)| d.clone());
                 let mut c = run_check(
@@ -1353,12 +1394,55 @@ mod tests {
     }
     #[test]
     fn architecture_and_natural_order_pick_the_right_file() {
-        let names = ["App-arm64.AppImage", "App-x86_64.AppImage"];
-        let items: Vec<&&str> = names.iter().collect();
-        if crate::elf::host_arch() == "x86_64" {
-            assert_eq!(pick(items, |s| s).copied(), Some("App-x86_64.AppImage"));
-        }
+        let names = [
+            "App-armv7l.AppImage",
+            "App-arm64.AppImage",
+            "App-x86_64.AppImage",
+        ];
+        let pick =
+            |arch, names: &[&'static str]| pick_for(arch, names.iter().collect(), |s| s).copied();
+        assert_eq!(pick("x86_64", &names), Some("App-x86_64.AppImage"));
+        assert_eq!(pick("aarch64", &names), Some("App-arm64.AppImage"));
+        assert_eq!(pick("armhf", &names), Some("App-armv7l.AppImage"));
+        // An x86_64 app kept on an ARM computer (FEX) stays x86_64: the pick
+        // follows the installed file, which the update must match.
+        assert_eq!(pick("x86_64", &names[1..]), Some("App-x86_64.AppImage"));
+        // No file for this architecture: one that names none, never one
+        // named for another.
+        let two = ["App-x86_64.AppImage", "App.AppImage"];
+        assert_eq!(pick("aarch64", &two), Some("App.AppImage"));
+        assert_eq!(pick("x86_64", &two), Some("App-x86_64.AppImage"));
+        assert_eq!(
+            pick(
+                "aarch64",
+                &["App-1.0-aarch64.AppImage", "App-1.0-x86_64.AppImage"]
+            ),
+            Some("App-1.0-aarch64.AppImage")
+        );
+        assert_eq!(arch_in_name("Firefox-x64.AppImage"), Some("x86_64"));
+        assert_eq!(arch_in_name("App-1.0.AppImage"), None);
         assert!(natural_cmp("app-1.10", "app-1.9").is_gt());
+    }
+    #[test]
+    fn an_update_for_another_architecture_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, machine: u16| {
+            let mut bytes = crate::elf::tests::tiny_elf("", b"hsqs....");
+            bytes[18..20].copy_from_slice(&machine.to_le_bytes());
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let x86 = write("x86.AppImage", 0x3e);
+        let arm = write("arm.AppImage", 0xb7);
+        let x86_new = write("x86-new.AppImage", 0x3e);
+        assert_eq!(
+            check_same_arch(&x86, &x86_new).unwrap(),
+            "x86_64 like the installed file"
+        );
+        let err = check_same_arch(&arm, &x86_new).unwrap_err();
+        assert!(err.contains("built for x86_64") && err.contains("for aarch64"));
+        assert!(check_same_arch(&x86, &arm).is_err());
     }
     #[test]
     fn an_app_without_any_source_is_never_called_up_to_date() {

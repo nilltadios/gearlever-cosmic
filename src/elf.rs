@@ -196,7 +196,8 @@ pub mod tests {
         out[6] = 1;
         out[8..11].copy_from_slice(b"AI\x02");
         out[16..18].copy_from_slice(&2u16.to_le_bytes());
-        out[18..20].copy_from_slice(&0x3eu16.to_le_bytes());
+        // The machine the tests run on, so fixtures look native there.
+        out[18..20].copy_from_slice(&host_machine().to_le_bytes());
         let names_off = 64u64;
         let info_off = names_off + names.len() as u64;
         let shoff = info_off + info.len() as u64;
@@ -219,6 +220,19 @@ pub mod tests {
         out.extend_from_slice(payload);
         out
     }
+    /// The ELF machine number of `host_arch`.
+    pub fn host_machine() -> u16 {
+        [0x3e, 0xb7, 0x03, 0x28, 0xf3]
+            .into_iter()
+            .find(|m| arch_name(*m) == host_arch())
+            .unwrap_or(0)
+    }
+    #[test]
+    fn machine_numbers_name_the_architecture() {
+        assert_eq!(arch_name(0x3e), "x86_64");
+        assert_eq!(arch_name(0xb7), "aarch64");
+        assert_eq!(arch_name(host_machine()), host_arch());
+    }
     #[test]
     fn reads_type_arch_offset_and_update_info() {
         let dir = tempfile::tempdir().unwrap();
@@ -227,7 +241,7 @@ pub mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let elf = read(&path).unwrap();
         assert_eq!(elf.appimage_type, 2);
-        assert_eq!(elf.arch, "x86_64");
+        assert_eq!(elf.arch, host_arch());
         assert_eq!(elf.payload_offset as usize, bytes.len() - 8);
         assert_eq!(elf.payload(&path), Payload::SquashFs);
         assert_eq!(
