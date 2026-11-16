@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build release binaries and the AppImage inside the Ubuntu 26.04 container
-# (podman or docker). Output: dist/GearLever_COSMIC-VERSION-x86_64.AppImage,
+# (podman or docker), for this machine's architecture (x86_64 or aarch64).
+# Output: dist/GearLever_COSMIC-VERSION-ARCH.AppImage,
 # .zsync and .sha256. Cargo downloads and build artifacts are cached in
 # packaging/cache. Nothing is installed on the host.
 # Usage: [OUT=dir] packaging/container-build.sh   (default OUT=dist)

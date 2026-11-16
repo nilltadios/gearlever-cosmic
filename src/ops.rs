@@ -761,6 +761,10 @@ pub fn same_app(inv: &Inventory, meta: &Metadata) -> Vec<App> {
         .collect()
 }
 
+/// How long `execute` waits for the operation lock before reporting that
+/// another operation is running.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 pub fn execute(
     op: Operation,
     paths: &Paths,
@@ -775,9 +779,20 @@ pub fn execute(
         .write(true)
         .open(paths.lock())
         .map_err(|e| e.to_string())?;
-    lock.try_lock().map_err(|_| {
-        "Another Gear Lever COSMIC operation is running; try again when it finishes".to_string()
-    })?;
+    // A process started at the same moment (by this program or a test
+    // thread) holds a copy of every open file until it execs, so a lock
+    // just released can still look held for a few milliseconds. Retry
+    // briefly before reporting a real overlapping operation.
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    while lock.try_lock().is_err() {
+        if std::time::Instant::now() >= deadline {
+            return Err(
+                "Another Gear Lever COSMIC operation is running; try again when it finishes"
+                    .to_string(),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     let mut report = Report {
         title: op.title(),
         started: crate::now(),
@@ -974,9 +989,13 @@ fn run(
             ));
             let verified =
                 updates::download(download, &staging, &|f| job.fraction(f), &job.cancel)?;
-            report
-                .steps
-                .push(format!("Downloaded and checked: {}", verified.join(", ")));
+            let arch = updates::check_same_arch(&app.path, &staging).inspect_err(|_| {
+                let _ = fs::remove_file(&staging);
+            })?;
+            report.steps.push(format!(
+                "Downloaded and checked: {}, {arch}",
+                verified.join(", ")
+            ));
             job.check().inspect_err(|_| {
                 let _ = fs::remove_file(&staging);
             })?;
@@ -1761,6 +1780,81 @@ mod tests {
         assert_eq!(after.apps.len(), 1);
         assert_eq!(after.apps[0].path, target);
         assert!(after.apps[0].standard_path.is_none());
+    }
+
+    #[test]
+    fn an_update_built_for_another_architecture_replaces_nothing() {
+        let (dir, paths, settings) = setup();
+        let downloads = dir.path().join("Downloads");
+        fs::create_dir_all(&downloads).unwrap();
+        let file = demo(&downloads, "Demo-1.0.AppImage", "1.0");
+        let op = Operation::Integrate {
+            file,
+            conflict: Conflict::Ask,
+            replace: None,
+            source: None,
+        };
+        execute(op, &paths, &settings, &Job::default()).unwrap();
+        let app = crate::library::load(&paths, &settings).apps.remove(0);
+        let entry = paths.applications().join("demo_app.desktop");
+        let (installed, menu) = (fs::read(&app.path).unwrap(), fs::read(&entry).unwrap());
+        // The same app built for another machine, served once over HTTP.
+        let mut other = fs::read(demo(&downloads, "Demo-1.1.AppImage", "1.1")).unwrap();
+        let machine: u16 = if crate::elf::host_arch() == "x86_64" {
+            0xb7
+        } else {
+            0x3e
+        };
+        other[18..20].copy_from_slice(&machine.to_le_bytes());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/Demo-1.1.AppImage",
+            listener.local_addr().unwrap()
+        );
+        let len = other.len() as u64;
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = conn.read(&mut request);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                other.len()
+            );
+            conn.write_all(head.as_bytes()).unwrap();
+            conn.write_all(&other).unwrap();
+        });
+        let op = Operation::Update {
+            app: app.clone(),
+            download: crate::updates::Download {
+                url,
+                name: Some("Demo-1.1.AppImage".into()),
+                size: Some(len),
+                sha1: None,
+                sha256: None,
+                sha512: None,
+            },
+            version: Some("1.1".into()),
+        };
+        let report = execute(op, &paths, &settings, &Job::default()).unwrap();
+        server.join().unwrap();
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.contains("nothing was replaced")),
+            "{:?}",
+            report.errors
+        );
+        assert_eq!(fs::read(&app.path).unwrap(), installed);
+        assert_eq!(fs::read(&entry).unwrap(), menu);
+        let folder = app.path.parent().unwrap();
+        let left: Vec<_> = fs::read_dir(folder)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".download-"))
+            .collect();
+        assert!(left.is_empty(), "staging files left: {left:?}");
     }
 
     #[test]

@@ -135,7 +135,14 @@ fn main() {
     use base64::Engine;
     use sha2::Digest;
     let sha = base64::engine::general_purpose::STANDARD.encode(sha2::Sha512::digest(&newer));
-    fs::write(server.join("sky-notes/latest-linux.yml"), format!("version: 2.1.0\nfiles:\n  - url: Sky-Notes-2.1.0.AppImage\n    sha512: {sha}\n    size: {}\npath: Sky-Notes-2.1.0.AppImage\nsha512: {sha}\nreleaseDate: '2026-11-01T00:00:00.000Z'\n", newer.len())).unwrap();
+    // electron-builder publishes one feed per architecture: latest-linux.yml
+    // for x64, latest-linux-arm64.yml for arm64. The fixture's files are
+    // built for the runtime's architecture, so its feed is named for it.
+    let feed = match u16::from_le_bytes([runtime[18], runtime[19]]) {
+        0xb7 => "sky-notes/latest-linux-arm64.yml",
+        _ => "sky-notes/latest-linux.yml",
+    };
+    fs::write(server.join(feed), format!("version: 2.1.0\nfiles:\n  - url: Sky-Notes-2.1.0.AppImage\n    sha512: {sha}\n    size: {}\npath: Sky-Notes-2.1.0.AppImage\nsha512: {sha}\nreleaseDate: '2026-11-01T00:00:00.000Z'\n", newer.len())).unwrap();
     // 3. Old Tool: runtime mentions libfuse.so.2 (an AppImageKit-style runtime).
     // Overwrite the compiler note in the runtime's .comment section, so the
     // runtime mentions libfuse.so.2 like the AppImageKit runtime does.

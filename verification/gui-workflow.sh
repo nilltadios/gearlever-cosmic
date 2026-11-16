@@ -32,6 +32,17 @@ cleanup() {
 }
 trap cleanup EXIT
 fail() { echo "FAIL: $*"; exit 1; }
+# The file a process runs: its exe, or under qemu-user (an x86_64 fixture on
+# ARM) the emulated file as mapped, with " (deleted)" once replaced.
+program() {
+  local e; e=$(readlink "/proc/$1/exe" 2>/dev/null) || return 0
+  if [[ ${e##*/} == qemu-* ]]; then
+    local f; f=$(tr '\0' '\n' < "/proc/$1/cmdline" | sed -n 2p)
+    e=$(rg -o -F "$f" "/proc/$1/maps" 2>/dev/null | head -1)
+    rg -q -F "$f (deleted)" "/proc/$1/maps" 2>/dev/null && e="$f (deleted)"
+  fi
+  echo "$e"
+}
 ok() { echo "ok: $*"; }
 D="$H/Downloads"
 # Setup through the CLI: two apps integrated, a source for Demo Editor.
@@ -66,7 +77,7 @@ ui activate updates.demo_editor.update --apply >/dev/null; sleep 0.5; ui wait --
 notes=$(state "s['last_operation']['notes']")
 [[ $notes == *"still running the previous version"* ]] || fail "update notes: $notes"
 kill -0 "$app_pid" || fail "the running app was stopped"
-[[ "$(readlink /proc/$app_pid/exe)" == *"(deleted)" ]] || fail "running app should keep the old file"
+[[ "$(program "$app_pid")" == *"(deleted)" ]] || fail "running app should keep the old file"
 ui capture "$out/3-after-update.png" >/dev/null
 ok "updated from the GUI while running; app kept running; note shown; render 3-after-update.png"
 
@@ -85,7 +96,7 @@ for _ in $(seq 1 60); do kill -0 "$app_pid" 2>/dev/null || break; sleep 0.25; do
 kill -0 "$app_pid" 2>/dev/null && fail "the old instance should have quit"
 new_pid=""
 for _ in $(seq 1 40); do
-  for d in /proc/[0-9]*; do [[ "$(readlink "$d/exe" 2>/dev/null)" == "$H/AppImages/demo_editor.appimage" ]] && new_pid=${d#/proc/}; done
+  for d in /proc/[0-9]*; do [[ "$(program "${d#/proc/}")" == "$H/AppImages/demo_editor.appimage" ]] && new_pid=${d#/proc/}; done
   [[ -n $new_pid ]] && break; sleep 0.25
 done
 [[ -n $new_pid ]] || fail "the new version should be running after Relaunch"

@@ -4,9 +4,9 @@ Add AppImages to your app menu, keep them updated, and see clearly what can and 
 
 ## Install
 
-Download `GearLever_COSMIC-VERSION-x86_64.AppImage` from the [latest release](https://github.com/nilltadios/gearlever-cosmic/releases/latest), make it executable and open it. It runs on any Linux distribution (built the [Anylinux](https://github.com/pkgforge-dev/Anylinux-AppImages) way: it carries its own libraries, needs no FUSE 2, and uses your system's GPU drivers).
+Download the AppImage for your computer from the [latest release](https://github.com/nilltadios/gearlever-cosmic/releases/latest), make it executable and open it: `GearLever_COSMIC-VERSION-x86_64.AppImage` for Intel and AMD, `GearLever_COSMIC-VERSION-aarch64.AppImage` for 64-bit ARM, including Apple Silicon Macs running Asahi Linux (16 KB memory pages). It runs on any Linux distribution (built the [Anylinux](https://github.com/pkgforge-dev/Anylinux-AppImages) way: it carries its own libraries, needs no FUSE 2, and uses your system's GPU drivers).
 
-To add it to your app menu, open the AppImage with itself: drop it on its own window, or open it from the Add page. After that it updates like any other app it manages; the release carries `.zsync` update information.
+To add it to your app menu, open the AppImage with itself: drop it on its own window, or open it from the Add page. After that it updates like any other app it manages; the release carries `.zsync` update information, and each AppImage updates only to the file for its own architecture.
 
 ## What it does
 
@@ -23,9 +23,9 @@ Nothing is deleted permanently: removed AppImages, menu entries and icons go to 
 ## Command line and AI agents
 
 ```sh
-./GearLever_COSMIC-*-x86_64.AppImage cli guide
-./GearLever_COSMIC-*-x86_64.AppImage cli run --cmd 'update.check={}'
-./GearLever_COSMIC-*-x86_64.AppImage cli --list-updates --all-statuses
+./GearLever_COSMIC-*.AppImage cli guide
+./GearLever_COSMIC-*.AppImage cli run --cmd 'update.check={}'
+./GearLever_COSMIC-*.AppImage cli --list-updates --all-statuses
 ```
 
 `guide` is the starting point. Changes are dry-run plans until `--apply`. Gear Lever's own options (`--integrate`, `--update`, `--list-updates --json`, …) work too. The open window can be inspected and operated with `cli ui …`. See the [CLI guide](docs/cli.md), the [agent workflow](docs/agents.md), [live window controls](docs/ui-cli.md) and [how updates work](docs/updates.md).

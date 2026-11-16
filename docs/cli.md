@@ -53,7 +53,7 @@ Repeated `--cmd` values run in order. `--script FILE` accepts `{"schema_version"
 | Exit | Meaning |
 |---|---|
 | 0 | Everything succeeded, or every plan was valid |
-| 1 | Backend or I/O failure, including a partly applied operation |
+| 1 | Backend or I/O failure, including a partly applied operation. When one command plans several operations (one per app or file), a failed one does not stop the others: `error.details.reports` lists the completed ones, `failed` every failed one, and `report` the first failure |
 | 2 | Invalid request, conflict, already integrated, not an AppImage |
 | 3 | Missing or ambiguous app, or no installable update |
 | 4 | A path outside the granted automation roots |

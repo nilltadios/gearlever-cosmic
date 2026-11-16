@@ -79,8 +79,9 @@ pub fn processes(appimage: &Path) -> Result<(Vec<u32>, Vec<u32>), String> {
             continue;
         }
         let dir = entry.path();
-        // Other users' processes are unreadable and skipped here.
-        let Ok(exe) = fs::read_link(dir.join("exe")) else {
+        // Other users' processes are unreadable and skipped here. A program
+        // run by qemu-user counts by the emulated file, not qemu.
+        let Some(exe) = crate::host::process_program(&dir) else {
             continue;
         };
         let environ = fs::read(dir.join("environ")).unwrap_or_default();

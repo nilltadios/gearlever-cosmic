@@ -10,7 +10,7 @@
 # Output: verification/out-resources-*/results.json and a table on stdout.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
-appimage="$(realpath "${1:-dist/GearLever_COSMIC-0.1.0-x86_64.AppImage}")"
+appimage="$(realpath "${1:-$(ls dist/GearLever_COSMIC-*-"$(uname -m)".AppImage | sort -V | tail -n1)}")"
 runs="${2:-3}"
 L="${LCU:-$HOME/.claude/plugins/cache/linux-computer-use/linux-computer-use/8f2aaf9869d5/lcu}"
 out="$PWD/verification/out-resources-$(date +%Y%m%d-%H%M%S)"

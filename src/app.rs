@@ -241,11 +241,17 @@ pub struct Outcome {
     pub log: Option<PathBuf>,
     /// Apps this job replaced; a running one gets a Relaunch button.
     pub replaced: Vec<String>,
+    /// For a batch (Update All, several files): one line per finished
+    /// operation, and how many failed.
+    pub lines: Vec<String>,
+    pub failed: usize,
 }
 
 pub struct RunningJob {
     pub job: Job,
     pub title: String,
+    /// The title of a job with several operations, such as "Update 2 apps".
+    pub batch: Option<String>,
     pub queue: Vec<Operation>,
     pub done: usize,
     pub total: usize,
@@ -683,10 +689,20 @@ impl App {
         } else {
             format!("{} ({total} steps)", ops[0].title())
         };
+        let batch = (total > 1).then(|| {
+            if ops.iter().all(|o| matches!(o, Operation::Update { .. })) {
+                format!("Update {total} apps")
+            } else if ops.iter().all(|o| matches!(o, Operation::Integrate { .. })) {
+                format!("Add {total} AppImages")
+            } else {
+                format!("{total} operations")
+            }
+        });
         self.outcome = None;
         self.job = Some(RunningJob {
             job: Job::default(),
             title,
+            batch,
             queue: ops,
             done: 0,
             total,
@@ -1999,11 +2015,20 @@ impl App {
             .width(Length::Fill)
             .push(widget::text::heading(if o.ok {
                 format!("{}: done", o.title)
+            } else if !o.lines.is_empty() {
+                format!("{}: {} of {} failed", o.title, o.failed, o.lines.len())
             } else {
                 format!("{}: failed", o.title)
             }));
-        for e in &o.errors {
-            col = col.push(wrap(e.clone()));
+        // A batch lists each operation's result (its errors included);
+        // a single operation lists its errors.
+        if o.lines.is_empty() {
+            for e in &o.errors {
+                col = col.push(wrap(e.clone()));
+            }
+        }
+        for line in &o.lines {
+            col = col.push(wrap(line.clone()));
         }
         for n in &o.notes {
             col = col.push(wrap(n.clone()));
@@ -2939,12 +2964,17 @@ impl cosmic::Application for App {
                     .as_ref()
                     .map(|j| j.replacing.clone())
                     .unwrap_or_default();
+                let batch = self.job.as_ref().and_then(|j| j.batch.clone());
                 let stop;
                 let outcome = match *result {
                     Ok(r) => {
                         let ok = r.errors.is_empty();
-                        stop = !ok || r.cancelled;
-                        let mut o = self.outcome.take().filter(|o| o.ok).unwrap_or(Outcome {
+                        // Queued operations are independent (Update All, several
+                        // files, Gear Lever import): a failed one does not stop
+                        // the rest. Cancelling does. The outcome keeps every
+                        // operation's steps and errors.
+                        stop = r.cancelled;
+                        let mut o = self.outcome.take().unwrap_or(Outcome {
                             title: title.clone(),
                             ok: true,
                             steps: vec![],
@@ -2952,8 +2982,22 @@ impl cosmic::Application for App {
                             errors: vec![],
                             log: None,
                             replaced: vec![],
+                            lines: vec![],
+                            failed: 0,
                         });
                         o.ok &= ok;
+                        if let Some(b) = &batch {
+                            o.title = b.clone();
+                            o.lines.push(if ok {
+                                r.steps
+                                    .last()
+                                    .cloned()
+                                    .unwrap_or_else(|| format!("{title}: done"))
+                            } else {
+                                o.failed += 1;
+                                format!("{title}: failed. {}", r.errors.join(" "))
+                            });
+                        }
                         if ok {
                             o.replaced.extend(replacing);
                         }
@@ -2969,15 +3013,25 @@ impl cosmic::Application for App {
                     }
                     Err(e) => {
                         stop = true;
-                        Outcome {
+                        let mut o = self.outcome.take().unwrap_or(Outcome {
                             title: title.clone(),
                             ok: false,
                             steps: vec![],
                             notes: vec![],
-                            errors: vec![e],
+                            errors: vec![],
                             log: None,
                             replaced: vec![],
+                            lines: vec![],
+                            failed: 0,
+                        });
+                        o.ok = false;
+                        if let Some(b) = &batch {
+                            o.title = b.clone();
+                            o.failed += 1;
+                            o.lines.push(format!("{title}: failed. {e}"));
                         }
+                        o.errors.push(e);
+                        o
                     }
                 };
                 let summary = outcome

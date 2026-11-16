@@ -451,4 +451,33 @@ mod tests {
         fs::write(root.join("usr/bin/fusermount3"), b"").unwrap();
         assert_eq!(check(&path, &System { root }).unwrap().verdict, Verdict::Ok);
     }
+    #[test]
+    fn an_appimage_for_another_architecture_is_a_problem() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = appimage::tests::fixture(
+            dir.path(),
+            "c.AppImage",
+            "",
+            &[("/c.desktop", b"[Desktop Entry]\nName=C\nExec=c\n")],
+            &[],
+        );
+        let other: u16 = if elf::host_arch() == "aarch64" {
+            0x3e
+        } else {
+            0xb7
+        };
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[18..20].copy_from_slice(&other.to_le_bytes());
+        fs::write(&path, bytes).unwrap();
+        let root = dir.path().join("sys");
+        fs::create_dir_all(root.join("usr/bin")).unwrap();
+        fs::write(root.join("usr/bin/fusermount3"), b"").unwrap();
+        let r = check(&path, &System { root }).unwrap();
+        assert!(
+            r.problems[0].starts_with(&format!("Built for {}", elf::arch_name(other))),
+            "{:?}",
+            r.problems
+        );
+        assert_ne!(r.verdict, Verdict::Ok);
+    }
 }

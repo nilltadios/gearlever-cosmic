@@ -7,9 +7,9 @@ For each app the first available source is used:
 1. **A custom source** set in this app (`update.set-source`, or the app page).
 2. **Gear Lever's saved source** for the same file, read from `gearlever.conf` (Flatpak or native install). It is used as is until you import it (`gearlever.import`) or set another.
 3. **Embedded update information** (`.upd_info` in the AppImage): `gh-releases-zsync|…` or `zsync|URL`.
-4. **The app's own updater**: electron-updater (`resources/app-update.yml`). For the `github` and `generic` providers its feed (`latest-linux.yml`) is read.
+4. **The app's own updater**: electron-updater (`resources/app-update.yml`). For the `github` and `generic` providers its feed for the installed file's architecture is read (`latest-linux.yml` for x86_64, `latest-linux-arm64.yml` for aarch64); for other architectures the app says to open the app.
 
-Source types and fields (Gear Lever's names, so its saved settings and `--set-update-source` options carry over): `StaticFileUpdater` (url), `GithubUpdater` (repo, repo_filename, allow_prereleases), `GitlabUpdater` (repo_url, repo_filename), `CodebergUpdater` (repo, repo_filename, allow_prereleases), `ForgejoUpdater` (repo_url, repo_filename, allow_prereleases), `FTPUpdater` (url, filename). `repo_filename` is a glob; with several matches the one for this machine's architecture is chosen. Set `GITHUB_TOKEN` to raise GitHub's API rate limit.
+Source types and fields (Gear Lever's names, so its saved settings and `--set-update-source` options carry over): `StaticFileUpdater` (url), `GithubUpdater` (repo, repo_filename, allow_prereleases), `GitlabUpdater` (repo_url, repo_filename), `CodebergUpdater` (repo, repo_filename, allow_prereleases), `ForgejoUpdater` (repo_url, repo_filename, allow_prereleases), `FTPUpdater` (url, filename). `repo_filename` (and the FTP `filename`) is a glob; of the matching files, the one named for the installed AppImage's architecture is chosen (an x86_64 AppImage kept on an ARM computer stays x86_64), else one whose name gives no architecture, never one named for another architecture. Architecture words count only as whole words. An FTP `filename` may have wildcard folders (`/pub/app/*/App-*.AppImage`): the newest folder, in natural order, with matching files decides, and when its matching files are all for other architectures the check is `not_found` rather than an older version. Apps that update themselves through electron-updater are checked against the feed for their architecture (`latest-linux.yml` for x86_64, `latest-linux-arm64.yml` for aarch64). A downloaded file whose ELF machine differs from the installed file's is refused before anything is replaced. Set `GITHUB_TOKEN` to raise GitHub's API rate limit.
 
 ## Statuses
 
@@ -19,7 +19,7 @@ Source types and fields (Gear Lever's names, so its saved settings and `--set-up
 | `up_to_date` | Compared with the source and identical. `compared_by` says how. |
 | `self_updating` | The app has its own updater. `update_known`: true (newer version seen, open the app), null (could not tell). |
 | `no_source` | No source is known. Nothing was checked. |
-| `not_found` | The source has no file matching the name pattern. |
+| `not_found` | The source has no file matching the name pattern, or the newest release's matching files are all for other architectures (the message names them). Older releases are not searched then. |
 | `failed` | The check failed (network, HTTP error, rate limit). Nothing is known. |
 
 Comparison, strongest first: SHA-1 from a `.zsync` file, the SHA-256 digest GitHub publishes per asset, SHA-512 from an electron-updater feed, then the file size. Size is all a plain URL or FTP offers; it cannot tell two builds of equal size apart, and results say `compared_by: size`. Gear Lever reports "No updates available" in all of the non-`available` cases; this app never does.

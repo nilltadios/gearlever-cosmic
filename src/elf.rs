@@ -12,6 +12,9 @@ pub struct Elf {
     /// 0 = not an AppImage, 1 = ISO 9660 (type 1), 2 = SquashFS/DwarFS (type 2).
     pub appimage_type: u8,
     pub arch: &'static str,
+    /// The raw ELF machine number `arch` is named from, also for machines
+    /// `arch_name` does not know.
+    pub machine: u16,
     /// End of the ELF runtime: the embedded filesystem image starts here.
     pub payload_offset: u64,
     pub sections: Vec<(String, u64, u64)>,
@@ -100,7 +103,8 @@ pub fn read(path: &Path) -> Result<Elf, String> {
         b"AI\x02" => 2,
         _ => 0,
     };
-    let arch = arch_name(u16_at(&ident, 18));
+    let machine = u16_at(&ident, 18);
+    let arch = arch_name(machine);
     let (shoff, shentsize, shnum, shstrndx) = if wide {
         (
             u64_at(&ident, 0x28),
@@ -151,6 +155,7 @@ pub fn read(path: &Path) -> Result<Elf, String> {
     Ok(Elf {
         appimage_type,
         arch,
+        machine,
         payload_offset,
         sections,
     })
@@ -196,7 +201,8 @@ pub mod tests {
         out[6] = 1;
         out[8..11].copy_from_slice(b"AI\x02");
         out[16..18].copy_from_slice(&2u16.to_le_bytes());
-        out[18..20].copy_from_slice(&0x3eu16.to_le_bytes());
+        // The machine the tests run on, so fixtures look native there.
+        out[18..20].copy_from_slice(&host_machine().to_le_bytes());
         let names_off = 64u64;
         let info_off = names_off + names.len() as u64;
         let shoff = info_off + info.len() as u64;
@@ -219,6 +225,19 @@ pub mod tests {
         out.extend_from_slice(payload);
         out
     }
+    /// The ELF machine number of `host_arch`.
+    pub fn host_machine() -> u16 {
+        [0x3e, 0xb7, 0x03, 0x28, 0xf3]
+            .into_iter()
+            .find(|m| arch_name(*m) == host_arch())
+            .unwrap_or(0)
+    }
+    #[test]
+    fn machine_numbers_name_the_architecture() {
+        assert_eq!(arch_name(0x3e), "x86_64");
+        assert_eq!(arch_name(0xb7), "aarch64");
+        assert_eq!(arch_name(host_machine()), host_arch());
+    }
     #[test]
     fn reads_type_arch_offset_and_update_info() {
         let dir = tempfile::tempdir().unwrap();
@@ -227,7 +246,7 @@ pub mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let elf = read(&path).unwrap();
         assert_eq!(elf.appimage_type, 2);
-        assert_eq!(elf.arch, "x86_64");
+        assert_eq!(elf.arch, host_arch());
         assert_eq!(elf.payload_offset as usize, bytes.len() - 8);
         assert_eq!(elf.payload(&path), Payload::SquashFs);
         assert_eq!(
