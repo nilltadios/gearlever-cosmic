@@ -20,8 +20,8 @@
 # wrong folder.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
-QS_COMMIT=1a5594c7f47ec5cb46ce70f6e11b5c5781f17f5f
-QS_SHA=35ba7b95f91f4665707c4cab5ed99407ceea636c15675990bb42816d6d84cc33
+QS_COMMIT=a159da2858637fc3e8c480581b2999640ebbfe30
+QS_SHA=6fc4f4561288297a7f8237f92b872656be1b7a4ba534f2b6cb9cfecabcddfd9d
 bin="$(realpath "${1:-target/release}")"
 out="$(realpath -m "${2:-dist}")"
 
@@ -64,8 +64,8 @@ done
 # be built for it (checked before ldd, which cannot read foreign binaries).
 arch=$(uname -m)
 case $arch in
-  x86_64) RT_SHA=b3c2916153e089d703cee5a7ebc540941d2f1d71baa90eb3092b15eef48345a8 ;;
-  aarch64) RT_SHA=c1641dfe465f4cb70ae545fbfb9de7a221aa6e9a0b1d7ea600b213a1f10738a0 ;;
+  x86_64) RT_SHA=649948f2bf4c012fa909f0b746949f22e97fd4a9b86ae1aea0512b70813a9248 ;;
+  aarch64) RT_SHA=601aeaa0047c3103bffab41081c5acd25b2f449a74ea47cbafe95cc31b577716 ;;
   *) echo "Unsupported architecture $arch: AppImages are built for x86_64 and aarch64" >&2; exit 1 ;;
 esac
 for b in gearlever-cosmic gearlever-cosmic-cli; do
@@ -106,8 +106,8 @@ chmod +x "$qs"
 # with settings embedded. REUSE_CHECK_DELAY=0: otherwise uruntime keeps its mount helper
 # alive for reuse, holding the caller's stdout open, so `out=$(AppImage cli ...)`
 # took about 6 s instead of 0.2 s.
-RT_URL=https://github.com/VHSgunzo/uruntime/releases/download/v0.8.1/uruntime-appimage-dwarfs-lite-$arch
-rt_cache="$cache/uruntime-appimage-dwarfs-lite-v0.8.1-$arch"
+RT_URL=https://github.com/VHSgunzo/uruntime/releases/download/v0.8.3/uruntime-appimage-dwarfs-lite-$arch
+rt_cache="$cache/uruntime-appimage-dwarfs-lite-v0.8.3-$arch"
 if [[ ! -f $rt_cache ]] || ! echo "$RT_SHA  $rt_cache" | sha256sum -c --status; then
   curl -fsSL -o "$rt_cache.part" "$RT_URL"
   echo "$RT_SHA  $rt_cache.part" | sha256sum -c --status || { echo "uruntime checksum mismatch" >&2; rm -f "$rt_cache.part"; exit 1; }
