@@ -427,26 +427,43 @@ fn glob_match(pattern: &str, name: &str) -> bool {
 }
 
 /// The architecture a release file name says it is for, named like
-/// `elf::arch_name`, or None when the name does not say.
+/// `elf::arch_name`, or None when the name does not say. Only whole words
+/// count (between the ends of the name and characters that are not letters
+/// or digits), so `Marmelade` is not `armel` and `Box64` is not `x64`.
 fn arch_in_name(name: &str) -> Option<&'static str> {
     let n = name.to_lowercase();
-    let has = |words: &[&str]| words.iter().any(|w| n.contains(w));
-    if has(&["aarch64", "arm64"]) {
-        Some("aarch64")
-    } else if has(&["armv7", "armhf", "armel", "arm32"]) {
-        Some("armhf")
-    } else if has(&["x86_64", "x86-64", "amd64", "x64"]) {
-        Some("x86_64")
-    } else if has(&["i386", "i686"]) {
-        Some("i386")
-    } else {
-        None
-    }
+    let whole = |w: &str| {
+        n.match_indices(w).any(|(i, _)| {
+            let before = n[..i].chars().next_back();
+            let after = n[i + w.len()..].chars().next();
+            !before.is_some_and(|c| c.is_ascii_alphanumeric())
+                && !after.is_some_and(|c| c.is_ascii_alphanumeric())
+        })
+    };
+    const WORDS: [(&[&str], &str); 9] = [
+        (&["aarch64", "arm64"], "aarch64"),
+        (
+            &["armv7l", "armv7hl", "armv7", "armhf", "armel", "arm32"],
+            "armhf",
+        ),
+        (&["x86_64", "x86-64", "amd64", "x64"], "x86_64"),
+        (&["i386", "i686"], "i386"),
+        (&["riscv64"], "riscv64"),
+        (&["ppc64le", "ppc64el"], "ppc64le"),
+        (&["ppc64"], "ppc64"),
+        (&["s390x"], "s390x"),
+        (&["loongarch64", "loong64"], "loongarch64"),
+    ];
+    WORDS
+        .iter()
+        .find(|(words, _)| words.iter().any(|w| whole(w)))
+        .map(|(_, arch)| *arch)
 }
 
 /// Several assets match: the one named for `arch` (the installed file's),
-/// else one whose name gives no architecture, else the first. A file for another architecture is still refused before
-/// it replaces anything (`check_same_arch`).
+/// else one whose name gives no architecture, else the first. A file for
+/// another architecture is still refused before it replaces anything
+/// (`check_same_arch`).
 fn pick_for<'a, T>(arch: &str, items: Vec<&'a T>, name: impl Fn(&T) -> &str) -> Option<&'a T> {
     if items.len() <= 1 {
         return items.into_iter().next();
@@ -465,21 +482,23 @@ fn pick_for<'a, T>(arch: &str, items: Vec<&'a T>, name: impl Fn(&T) -> &str) -> 
 /// An update must be built for the same architecture as the file it
 /// replaces: an aarch64 app never turns into an x86_64 one because a
 /// release's file pattern also matched the other build.
-/// Returns what was compared, for the operation report.
+/// The ELF machine numbers are compared, so machines without a name here
+/// are refused too. Returns what was compared, for the operation report.
 pub fn check_same_arch(installed: &Path, new: &Path) -> Result<String, String> {
-    let arch = |p: &Path| crate::elf::read(p).map(|e| e.arch);
-    let (old, new) = (arch(installed)?, arch(new)?);
-    if old == "unknown" || new == "unknown" {
-        return Ok(format!(
-            "architecture not compared (installed {old}, new {new})"
-        ));
-    }
+    let read = |p: &Path| crate::elf::read(p).map(|e| e.machine);
+    let (old, new) = (read(installed)?, read(new)?);
+    let name = |m: u16| match crate::elf::arch_name(m) {
+        "unknown" => format!("ELF machine 0x{m:x}"),
+        a => a.to_string(),
+    };
     if old != new {
         return Err(format!(
-            "The downloaded file is built for {new}, but the installed one is for {old}; nothing was replaced. Check the update source's file name pattern"
+            "The downloaded file is built for {}, but the installed one is for {}; nothing was replaced. Check the update source's file name pattern",
+            name(new),
+            name(old)
         ));
     }
-    Ok(format!("{new} like the installed file"))
+    Ok(format!("{} like the installed file", name(new)))
 }
 
 /// A file's hash, cached beside its metadata while the file is unchanged.
@@ -1407,8 +1426,8 @@ mod tests {
         // An x86_64 app kept on an ARM computer (FEX) stays x86_64: the pick
         // follows the installed file, which the update must match.
         assert_eq!(pick("x86_64", &names[1..]), Some("App-x86_64.AppImage"));
-        // No file for this architecture: one that names none, never one
-        // named for another.
+        // No file for this architecture: one that names none is preferred
+        // over one named for another.
         let two = ["App-x86_64.AppImage", "App.AppImage"];
         assert_eq!(pick("aarch64", &two), Some("App.AppImage"));
         assert_eq!(pick("x86_64", &two), Some("App-x86_64.AppImage"));
@@ -1421,6 +1440,32 @@ mod tests {
         );
         assert_eq!(arch_in_name("Firefox-x64.AppImage"), Some("x86_64"));
         assert_eq!(arch_in_name("App-1.0.AppImage"), None);
+        // Whole words only: architecture words inside app names don't count.
+        assert_eq!(
+            arch_in_name("Marmelade-2.0-x86_64.AppImage"),
+            Some("x86_64")
+        );
+        assert_eq!(arch_in_name("Marmelade-3.1-x64.AppImage"), Some("x86_64"));
+        assert_eq!(arch_in_name("Box64-1.0.AppImage"), None);
+        assert_eq!(arch_in_name("App_x86_64.AppImage"), Some("x86_64"));
+        assert_eq!(arch_in_name("App-armv7l.AppImage"), Some("armhf"));
+        assert_eq!(arch_in_name("App-ppc64le.AppImage"), Some("ppc64le"));
+        let marmelade = [
+            "Marmelade-2.0-aarch64.AppImage",
+            "Marmelade-2.0-x86_64.AppImage",
+        ];
+        assert_eq!(
+            pick("x86_64", &marmelade),
+            Some("Marmelade-2.0-x86_64.AppImage")
+        );
+        assert_eq!(
+            pick("aarch64", &marmelade),
+            Some("Marmelade-2.0-aarch64.AppImage")
+        );
+        // A file named for an architecture this code has no name for is not
+        // taken as "names none".
+        let ppc = ["App-ppc64le.AppImage", "App.AppImage"];
+        assert_eq!(pick("aarch64", &ppc), Some("App.AppImage"));
         assert!(natural_cmp("app-1.10", "app-1.9").is_gt());
     }
     #[test]
@@ -1436,6 +1481,8 @@ mod tests {
         let x86 = write("x86.AppImage", 0x3e);
         let arm = write("arm.AppImage", 0xb7);
         let x86_new = write("x86-new.AppImage", 0x3e);
+        let ppc = write("ppc.AppImage", 0x15);
+        let ppc_new = write("ppc-new.AppImage", 0x15);
         assert_eq!(
             check_same_arch(&x86, &x86_new).unwrap(),
             "x86_64 like the installed file"
@@ -1443,6 +1490,10 @@ mod tests {
         let err = check_same_arch(&arm, &x86_new).unwrap_err();
         assert!(err.contains("built for x86_64") && err.contains("for aarch64"));
         assert!(check_same_arch(&x86, &arm).is_err());
+        // Machines without a name here are compared by number too.
+        let err = check_same_arch(&arm, &ppc).unwrap_err();
+        assert!(err.contains("built for ELF machine 0x15"), "{err}");
+        assert!(check_same_arch(&ppc, &ppc_new).is_ok());
     }
     #[test]
     fn an_app_without_any_source_is_never_called_up_to_date() {

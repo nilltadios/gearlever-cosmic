@@ -60,6 +60,21 @@ fi
 for b in gearlever-cosmic gearlever-cosmic-cli; do
   [[ -x $bin/$b ]] || { echo "$bin/$b is missing: run cargo build --locked --release --bins first" >&2; exit 1; }
 done
+# The AppImage is for this machine's architecture, and both binaries must
+# be built for it (checked before ldd, which cannot read foreign binaries).
+arch=$(uname -m)
+case $arch in
+  x86_64) RT_SHA=b3c2916153e089d703cee5a7ebc540941d2f1d71baa90eb3092b15eef48345a8 ;;
+  aarch64) RT_SHA=c1641dfe465f4cb70ae545fbfb9de7a221aa6e9a0b1d7ea600b213a1f10738a0 ;;
+  *) echo "Unsupported architecture $arch: AppImages are built for x86_64 and aarch64" >&2; exit 1 ;;
+esac
+for b in gearlever-cosmic gearlever-cosmic-cli; do
+  bin_arch=$(od -An -tx1 -j18 -N2 "$bin/$b" | tr -d ' \n')
+  case $arch:$bin_arch in
+    x86_64:3e00|aarch64:b700) ;;
+    *) echo "$bin/$b is not built for $arch (ELF machine $bin_arch)" >&2; exit 1 ;;
+  esac
+done
 
 # quick-sharun looks for libc only in /usr/lib/<arch>-linux-gnu and /usr/lib
 # (Debian and Arch layouts). Elsewhere (/usr/lib64 on Fedora and openSUSE)
@@ -91,17 +106,6 @@ chmod +x "$qs"
 # with settings embedded. REUSE_CHECK_DELAY=0: otherwise uruntime keeps its mount helper
 # alive for reuse, holding the caller's stdout open, so `out=$(AppImage cli ...)`
 # took about 6 s instead of 0.2 s.
-arch=$(uname -m)
-case $arch in
-  x86_64) RT_SHA=b3c2916153e089d703cee5a7ebc540941d2f1d71baa90eb3092b15eef48345a8 ;;
-  aarch64) RT_SHA=c1641dfe465f4cb70ae545fbfb9de7a221aa6e9a0b1d7ea600b213a1f10738a0 ;;
-  *) echo "Unsupported architecture $arch: AppImages are built for x86_64 and aarch64" >&2; exit 1 ;;
-esac
-bin_arch=$(od -An -tx1 -j18 -N2 "$bin/gearlever-cosmic" | tr -d ' \n')
-case $arch:$bin_arch in
-  x86_64:3e00|aarch64:b700) ;;
-  *) echo "$bin/gearlever-cosmic is not built for $arch (ELF machine $bin_arch)" >&2; exit 1 ;;
-esac
 RT_URL=https://github.com/VHSgunzo/uruntime/releases/download/v0.8.1/uruntime-appimage-dwarfs-lite-$arch
 rt_cache="$cache/uruntime-appimage-dwarfs-lite-v0.8.1-$arch"
 if [[ ! -f $rt_cache ]] || ! echo "$RT_SHA  $rt_cache" | sha256sum -c --status; then

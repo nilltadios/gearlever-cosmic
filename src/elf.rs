@@ -12,6 +12,9 @@ pub struct Elf {
     /// 0 = not an AppImage, 1 = ISO 9660 (type 1), 2 = SquashFS/DwarFS (type 2).
     pub appimage_type: u8,
     pub arch: &'static str,
+    /// The raw ELF machine number `arch` is named from, also for machines
+    /// `arch_name` does not know.
+    pub machine: u16,
     /// End of the ELF runtime: the embedded filesystem image starts here.
     pub payload_offset: u64,
     pub sections: Vec<(String, u64, u64)>,
@@ -100,7 +103,8 @@ pub fn read(path: &Path) -> Result<Elf, String> {
         b"AI\x02" => 2,
         _ => 0,
     };
-    let arch = arch_name(u16_at(&ident, 18));
+    let machine = u16_at(&ident, 18);
+    let arch = arch_name(machine);
     let (shoff, shentsize, shnum, shstrndx) = if wide {
         (
             u64_at(&ident, 0x28),
@@ -151,6 +155,7 @@ pub fn read(path: &Path) -> Result<Elf, String> {
     Ok(Elf {
         appimage_type,
         arch,
+        machine,
         payload_offset,
         sections,
     })

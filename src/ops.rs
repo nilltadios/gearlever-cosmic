@@ -1768,6 +1768,81 @@ mod tests {
     }
 
     #[test]
+    fn an_update_built_for_another_architecture_replaces_nothing() {
+        let (dir, paths, settings) = setup();
+        let downloads = dir.path().join("Downloads");
+        fs::create_dir_all(&downloads).unwrap();
+        let file = demo(&downloads, "Demo-1.0.AppImage", "1.0");
+        let op = Operation::Integrate {
+            file,
+            conflict: Conflict::Ask,
+            replace: None,
+            source: None,
+        };
+        execute(op, &paths, &settings, &Job::default()).unwrap();
+        let app = crate::library::load(&paths, &settings).apps.remove(0);
+        let entry = paths.applications().join("demo_app.desktop");
+        let (installed, menu) = (fs::read(&app.path).unwrap(), fs::read(&entry).unwrap());
+        // The same app built for another machine, served once over HTTP.
+        let mut other = fs::read(demo(&downloads, "Demo-1.1.AppImage", "1.1")).unwrap();
+        let machine: u16 = if crate::elf::host_arch() == "x86_64" {
+            0xb7
+        } else {
+            0x3e
+        };
+        other[18..20].copy_from_slice(&machine.to_le_bytes());
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/Demo-1.1.AppImage",
+            listener.local_addr().unwrap()
+        );
+        let len = other.len() as u64;
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut conn, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let _ = conn.read(&mut request);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                other.len()
+            );
+            conn.write_all(head.as_bytes()).unwrap();
+            conn.write_all(&other).unwrap();
+        });
+        let op = Operation::Update {
+            app: app.clone(),
+            download: crate::updates::Download {
+                url,
+                name: Some("Demo-1.1.AppImage".into()),
+                size: Some(len),
+                sha1: None,
+                sha256: None,
+                sha512: None,
+            },
+            version: Some("1.1".into()),
+        };
+        let report = execute(op, &paths, &settings, &Job::default()).unwrap();
+        server.join().unwrap();
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.contains("nothing was replaced")),
+            "{:?}",
+            report.errors
+        );
+        assert_eq!(fs::read(&app.path).unwrap(), installed);
+        assert_eq!(fs::read(&entry).unwrap(), menu);
+        let folder = app.path.parent().unwrap();
+        let left: Vec<_> = fs::read_dir(folder)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".download-"))
+            .collect();
+        assert!(left.is_empty(), "staging files left: {left:?}");
+    }
+
+    #[test]
     fn the_lock_refuses_overlapping_operations() {
         let (_dir, paths, settings) = setup();
         fs::create_dir_all(&paths.data).unwrap();
