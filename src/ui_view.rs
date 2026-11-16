@@ -684,7 +684,7 @@ impl App {
                 Dialog::About => json!({"kind":"about"}),
             }),
             "operation":operation,
-            "last_operation":self.outcome.as_ref().map(|o| json!({"title":o.title,"ok":o.ok,"steps":o.steps,"notes":o.notes,"errors":o.errors,"report":o.log,"replaced":o.replaced})),
+            "last_operation":self.outcome.as_ref().map(|o| json!({"title":o.title,"ok":o.ok,"steps":o.steps,"notes":o.notes,"errors":o.errors,"report":o.log,"replaced":o.replaced,"lines":o.lines,"failed":o.failed})),
             "notice":self.notice,"drag_over":self.drag_over,"search":self.query,"window":self.window_state,"sidebar_visible":self.core.nav_bar_active(),
             "view":self.ui_page(),
             "fields":self.ui_fields().iter().map(|(id, label)| json!({"id":id,"label":label})).collect::<Vec<_>>(),
