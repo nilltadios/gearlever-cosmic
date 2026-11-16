@@ -37,6 +37,8 @@ jobs:
             libxkbcommon0 patchelf strace file binutils xz-utils zstd python3 desktop-file-utils
       - uses: actions/checkout@v7
       - name: Install Rust from rust-toolchain.toml
+        # bash runs with -eo pipefail, so a failed download fails this step.
+        shell: bash
         run: |
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"])')
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$version" -c rustfmt,clippy
