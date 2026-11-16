@@ -1,6 +1,6 @@
 # Gear Lever COSMIC
 
-A Rust/libcosmic AppImage manager, distributed as x86_64 and aarch64 AppImages built with Anylinux tooling (quick-sharun + uruntime, DwarFS). Rust 1.99.1 and every crate, including libcosmic's Git revision, are pinned in `rust-toolchain.toml` and `Cargo.lock`.
+A Rust/libcosmic AppImage manager, distributed as x86_64 and aarch64 AppImages built with Anylinux tooling (quick-sharun + uruntime, DwarFS). Rust 1.100.0 and every crate, including libcosmic's Git revision, are pinned in `rust-toolchain.toml` and `Cargo.lock`.
 
 ## Launch and inspect
 
