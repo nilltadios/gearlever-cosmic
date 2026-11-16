@@ -761,6 +761,10 @@ pub fn same_app(inv: &Inventory, meta: &Metadata) -> Vec<App> {
         .collect()
 }
 
+/// How long `execute` waits for the operation lock before reporting that
+/// another operation is running.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 pub fn execute(
     op: Operation,
     paths: &Paths,
@@ -775,9 +779,20 @@ pub fn execute(
         .write(true)
         .open(paths.lock())
         .map_err(|e| e.to_string())?;
-    lock.try_lock().map_err(|_| {
-        "Another Gear Lever COSMIC operation is running; try again when it finishes".to_string()
-    })?;
+    // A process started at the same moment (by this program or a test
+    // thread) holds a copy of every open file until it execs, so a lock
+    // just released can still look held for a few milliseconds. Retry
+    // briefly before reporting a real overlapping operation.
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    while lock.try_lock().is_err() {
+        if std::time::Instant::now() >= deadline {
+            return Err(
+                "Another Gear Lever COSMIC operation is running; try again when it finishes"
+                    .to_string(),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     let mut report = Report {
         title: op.title(),
         started: crate::now(),
