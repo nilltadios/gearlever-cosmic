@@ -180,5 +180,6 @@ cp -r docs llms.txt LICENSE NOTICE "$APPDIR/share/gearlever-cosmic/"
 install -Dm755 packaging/cli.hook "$APPDIR/bin/50-gearlever-cli.hook"
 rm -f "$out/$OUTNAME" "$out/$OUTNAME.zsync"
 ( cd "$work" && HOME="$qs_home" XDG_CONFIG_HOME="$qs_home/.config" XDG_DATA_HOME="$qs_home/.local/share" "$qs" --make-appimage )
-sha256sum "$out/$OUTNAME" > "$out/$OUTNAME.sha256"
+# The file name alone, so `sha256sum -c` works next to the download.
+( cd "$out" && sha256sum "$OUTNAME" ) > "$out/$OUTNAME.sha256"
 echo "$out/$OUTNAME"
