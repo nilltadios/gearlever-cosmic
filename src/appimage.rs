@@ -343,17 +343,16 @@ impl Tree for Dir {
 /// readers (SquashFS or DwarFS). Nothing is executed.
 pub fn open_tree(path: &Path) -> Result<Box<dyn Tree>, String> {
     let elf = elf::read(path)?;
-    match elf.payload(path) {
+    // The offset skips a DwarFS AppImage's metadata sidecar, if it has one.
+    let (payload, offset) = elf.filesystem(path);
+    match payload {
         elf::Payload::SquashFs => {
             let file = fs::File::open(path).map_err(|e| e.to_string())?;
-            backhand::FilesystemReader::from_reader_with_offset(
-                BufReader::new(file),
-                elf.payload_offset,
-            )
-            .map(|fs| Box::new(Squash { fs }) as Box<dyn Tree>)
-            .map_err(|e| format!("Cannot read the embedded SquashFS image: {e}"))
+            backhand::FilesystemReader::from_reader_with_offset(BufReader::new(file), offset)
+                .map(|fs| Box::new(Squash { fs }) as Box<dyn Tree>)
+                .map_err(|e| format!("Cannot read the embedded SquashFS image: {e}"))
         }
-        elf::Payload::DwarFs => Dwarf::open(path, elf.payload_offset)
+        elf::Payload::DwarFs => Dwarf::open(path, offset)
             .map(|d| Box::new(d) as Box<dyn Tree>)
             .map_err(|e| format!("Cannot read the embedded DwarFS image: {e}")),
         elf::Payload::Unknown if elf.appimage_type == 1 => {

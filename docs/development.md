@@ -14,7 +14,7 @@ Native builds need a C compiler, pkg-config, xkbcommon and Wayland headers. The 
 
 | File | Purpose |
 |---|---|
-| `src/elf.rs` | AppImage type, architecture, payload offset, `.upd_info` |
+| `src/elf.rs` | AppImage type, architecture, payload offset (skipping a DwarFS AppImage's 128 KiB metadata SquashFS sidecar), `.upd_info` |
 | `src/appimage.rs` | Image readers (SquashFS via backhand, DwarFS via dwarfs), metadata, icons, hashes, cache |
 | `src/desktop.rs` | Desktop entry editing that keeps every other line; Exec parsing/quoting |
 | `src/library.rs` | Installed apps (menu entries that start AppImages), running detection |

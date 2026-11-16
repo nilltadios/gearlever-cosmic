@@ -175,15 +175,57 @@ impl Elf {
         (!text.is_empty()).then_some(text)
     }
     pub fn payload(&self, path: &Path) -> Payload {
+        self.filesystem(path).0
+    }
+    /// The application's filesystem image and where it starts. Usually that
+    /// is the image at the ELF boundary. A DwarFS AppImage may instead start
+    /// with a metadata SquashFS "sidecar" (desktop entry, `.DirIcon`, a stub
+    /// `AppRun`) for SquashFS-only tools, written by appimagetool with
+    /// `SQUASHFS_METADATA_SIDECAR=1`; the application is then the DwarFS
+    /// image `SIDECAR_SLOT` bytes later. uruntime's rule decides: a SquashFS
+    /// 4.0 image whose `bytes_used` fits the slot, zeros to the end of it,
+    /// and a DwarFS image right after. Anything else is an ordinary image.
+    pub fn filesystem(&self, path: &Path) -> (Payload, u64) {
+        let start = self.payload_offset;
         let Ok(mut file) = File::open(path) else {
-            return Payload::Unknown;
+            return (Payload::Unknown, start);
         };
-        match read_at(&mut file, self.payload_offset, 6) {
-            Ok(m) if &m[..4] == b"hsqs" => Payload::SquashFs,
-            Ok(m) if &m[..6] == b"DWARFS" => Payload::DwarFs,
-            _ => Payload::Unknown,
+        match read_at(&mut file, start, 6) {
+            Ok(m) if &m[..4] == b"hsqs" && has_sidecar(&mut file, start) => {
+                (Payload::DwarFs, start + SIDECAR_SLOT)
+            }
+            Ok(m) if &m[..4] == b"hsqs" => (Payload::SquashFs, start),
+            Ok(m) if &m[..6] == b"DWARFS" => (Payload::DwarFs, start),
+            _ => (Payload::Unknown, start),
         }
     }
+}
+
+/// The fixed size of uruntime's metadata sidecar slot (128 KiB), see
+/// <https://github.com/VHSgunzo/uruntime/blob/v0.8.3/docs/METADATA_SIDECAR.md>.
+pub const SIDECAR_SLOT: u64 = 128 * 1024;
+
+/// Whether the SquashFS image at `start` is a metadata sidecar in front of a
+/// DwarFS image (see `Elf::filesystem`).
+fn has_sidecar(file: &mut File, start: u64) -> bool {
+    // SquashFS 4.0 superblock, little-endian ("hsqs"): version_major (u16)
+    // at 28, bytes_used (u64) at 40, as in backhand's `v4::SuperBlock`.
+    let Ok(sb) = read_at(file, start, 48) else {
+        return false;
+    };
+    let version_major = u16::from_le_bytes([sb[28], sb[29]]);
+    let bytes_used = u64::from_le_bytes(sb[40..48].try_into().unwrap_or_default());
+    if version_major != 4 || !(48..=SIDECAR_SLOT).contains(&bytes_used) {
+        return false;
+    }
+    let padding_is_zero = read_at(
+        file,
+        start + bytes_used,
+        (SIDECAR_SLOT - bytes_used) as usize,
+    )
+    .is_ok_and(|pad| pad.iter().all(|b| *b == 0));
+    padding_is_zero
+        && read_at(file, start + SIDECAR_SLOT, 6).is_ok_and(|m| m.as_slice() == b"DWARFS")
 }
 
 #[cfg(test)]
@@ -231,6 +273,51 @@ pub mod tests {
             .into_iter()
             .find(|m| arch_name(*m) == host_arch())
             .unwrap_or(0)
+    }
+    /// A metadata sidecar slot: a SquashFS 4.0 superblock claiming
+    /// `bytes_used`, non-zero filler up to it, zeros to the end of the slot,
+    /// then `after`.
+    fn sidecar(bytes_used: u64, after: &[u8]) -> Vec<u8> {
+        let slot = SIDECAR_SLOT as usize;
+        let mut out = vec![0u8; slot];
+        out[..4].copy_from_slice(b"hsqs");
+        out[28..30].copy_from_slice(&4u16.to_le_bytes());
+        out[40..48].copy_from_slice(&bytes_used.to_le_bytes());
+        out[48..(bytes_used as usize).min(slot)].fill(0xaa);
+        out.extend_from_slice(after);
+        out
+    }
+    #[test]
+    fn a_metadata_sidecar_is_skipped_only_when_it_matches_uruntimes_rule() {
+        let dir = tempfile::tempdir().unwrap();
+        let open = |name: &str, payload: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, tiny_elf("", payload)).unwrap();
+            let elf = read(&path).unwrap();
+            let start = elf.payload_offset;
+            (elf.filesystem(&path), start)
+        };
+        // Sidecar, zero padding, DwarFS 128 KiB later: the app is the DwarFS.
+        let (fs, start) = open("sidecar.AppImage", &sidecar(4096, b"DWARFS\x02\x00"));
+        assert_eq!(fs, (Payload::DwarFs, start + SIDECAR_SLOT));
+        // Near misses stay ordinary SquashFS images at the ELF boundary.
+        let mut dirty = sidecar(4096, b"DWARFS\x02\x00");
+        dirty[SIDECAR_SLOT as usize - 1] = 1;
+        let misses = [
+            (
+                "too-big.AppImage",
+                sidecar(SIDECAR_SLOT + 1, b"DWARFS\x02\x00"),
+            ),
+            ("dirty-padding.AppImage", dirty),
+            ("no-dwarfs.AppImage", sidecar(4096, b"hsqs\x00\x00\x00\x00")),
+        ];
+        for (name, payload) in misses {
+            let (fs, start) = open(name, &payload);
+            assert_eq!(fs, (Payload::SquashFs, start), "{name}");
+        }
+        // A plain DwarFS image at the boundary is unchanged.
+        let (fs, start) = open("dwarfs.AppImage", b"DWARFS\x02\x00");
+        assert_eq!(fs, (Payload::DwarFs, start));
     }
     #[test]
     fn machine_numbers_name_the_architecture() {
