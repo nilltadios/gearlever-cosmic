@@ -1042,7 +1042,10 @@ pub fn run_request(request: &Request, ctx: &Context, policy: &Policy, job: &Job)
     if !policy.apply {
         return Ok(json!({"command":request.name(),"mode":"dry_run","plan":plans,"applied":false}));
     }
+    // The operations are independent (one per app or file), so a failed one
+    // does not stop the others. Only cancelling stops the rest.
     let mut reports = Vec::new();
+    let mut failed: Vec<ops::Report> = Vec::new();
     for op in ops {
         let report = ops::execute(op, &ctx.paths, &ctx.settings, job).map_err(|e| {
             if e.starts_with("Another") {
@@ -1060,23 +1063,34 @@ pub fn run_request(request: &Request, ctx: &Context, policy: &Policy, job: &Job)
                     report.log.display()
                 ),
             );
-            e.details = Some(json!({"reports":reports,"report":report}));
+            e.details = Some(json!({"reports":reports,"report":report,"failed":failed}));
             return Err(e);
         }
-        if !report.errors.is_empty() {
-            let mut e = error(
-                "operation_failed",
-                1,
-                format!(
-                    "{}\nReport: {}",
-                    report.errors.join("\n"),
-                    report.log.display()
-                ),
-            );
-            e.details = Some(json!({"reports":reports,"report":report}));
-            return Err(e);
+        if report.errors.is_empty() {
+            reports.push(report);
+        } else {
+            failed.push(report);
         }
-        reports.push(report);
+    }
+    if let Some(first) = failed.first() {
+        let mut message: Vec<String> = failed
+            .iter()
+            .map(|r| format!("{}\nReport: {}", r.errors.join("\n"), r.log.display()))
+            .collect();
+        if !reports.is_empty() {
+            message.push(format!(
+                "Completed: {}",
+                reports
+                    .iter()
+                    .map(|r| r.title.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        let mut e = error("operation_failed", 1, message.join("\n"));
+        // `report` is the first failure, as before; `failed` lists all of them.
+        e.details = Some(json!({"reports":reports,"report":first,"failed":failed}));
+        return Err(e);
     }
     Ok(json!({"command":request.name(),"mode":"applied","reports":reports}))
 }

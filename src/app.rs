@@ -2943,8 +2943,12 @@ impl cosmic::Application for App {
                 let outcome = match *result {
                     Ok(r) => {
                         let ok = r.errors.is_empty();
-                        stop = !ok || r.cancelled;
-                        let mut o = self.outcome.take().filter(|o| o.ok).unwrap_or(Outcome {
+                        // Queued operations are independent (Update All, several
+                        // files, Gear Lever import): a failed one does not stop
+                        // the rest. Cancelling does. The outcome keeps every
+                        // operation's steps and errors.
+                        stop = r.cancelled;
+                        let mut o = self.outcome.take().unwrap_or(Outcome {
                             title: title.clone(),
                             ok: true,
                             steps: vec![],
@@ -2969,15 +2973,18 @@ impl cosmic::Application for App {
                     }
                     Err(e) => {
                         stop = true;
-                        Outcome {
+                        let mut o = self.outcome.take().unwrap_or(Outcome {
                             title: title.clone(),
                             ok: false,
                             steps: vec![],
                             notes: vec![],
-                            errors: vec![e],
+                            errors: vec![],
                             log: None,
                             replaced: vec![],
-                        }
+                        });
+                        o.ok = false;
+                        o.errors.push(e);
+                        o
                     }
                 };
                 let summary = outcome
