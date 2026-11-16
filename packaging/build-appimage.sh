@@ -125,6 +125,11 @@ export OUTNAME="GearLever_COSMIC-$version-$arch.AppImage"
 export UPINFO="${UPINFO:-gh-releases-zsync|${repo%%/*}|${repo#*/}|latest|GearLever_COSMIC-*-$arch.AppImage.zsync}"
 export MAIN_BIN=gearlever-cosmic
 export APPIMAGE_ARCH="$arch"
+# A 128 KiB SquashFS copy of the desktop entry and icon in front of the
+# DwarFS image, so SquashFS-only tools (thumbnailers, other AppImage
+# managers) can show this AppImage. uruntime 0.8.3 skips it when starting;
+# Gear Lever COSMIC reads past it since 0.1.6 (elf::Elf::filesystem).
+export SQUASHFS_METADATA_SIDECAR=1
 # appimagetool writes X-AppImage-Version from VERSION ("UNKNOWN" if unset).
 export VERSION="$version"
 # Rendering is wgpu (Vulkan, then OpenGL) with a software fallback. Mesa is
