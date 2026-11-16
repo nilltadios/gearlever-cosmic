@@ -225,7 +225,7 @@ pub fn process_executables() -> Result<Vec<(u32, PathBuf)>, String> {
             let Some(pid) = entry.file_name().to_str().and_then(|s| s.parse().ok()) else {
                 continue;
             };
-            if let Ok(exe) = std::fs::read_link(entry.path().join("exe")) {
+            if let Some(exe) = process_program(&entry.path()) {
                 list.push((pid, exe));
             }
         }
@@ -242,6 +242,44 @@ pub fn process_executables() -> Result<Vec<(u32, PathBuf)>, String> {
     Ok(parse_ps(&String::from_utf8_lossy(&out.stdout)))
 }
 
+/// The program a process runs, from its `/proc/PID` folder: the executable,
+/// or for a program run by qemu-user (binfmt_misc, such as an x86_64
+/// AppImage on an ARM computer) the emulated file. Like `exe`, the path ends
+/// in " (deleted)" once that file was replaced.
+pub fn process_program(proc_dir: &Path) -> Option<PathBuf> {
+    let exe = std::fs::read_link(proc_dir.join("exe")).ok()?;
+    if !is_emulator(&exe) {
+        return Some(exe);
+    }
+    let cmdline = std::fs::read(proc_dir.join("cmdline")).unwrap_or_default();
+    let maps = std::fs::read_to_string(proc_dir.join("maps")).unwrap_or_default();
+    Some(emulated_program(&cmdline, &maps).unwrap_or(exe))
+}
+
+/// qemu-user's static or dynamic binaries (`qemu-x86_64-static`,
+/// `qemu-x86_64`).
+fn is_emulator(exe: &Path) -> bool {
+    exe.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("qemu-") && !n.starts_with("qemu-system-"))
+}
+
+/// The emulated program: the first argument after the emulator, as
+/// `/proc/PID/maps` shows it mapped (with " (deleted)" once replaced).
+fn emulated_program(cmdline: &[u8], maps: &str) -> Option<PathBuf> {
+    let program = cmdline
+        .split(|b| *b == 0)
+        .nth(1)
+        .and_then(|a| std::str::from_utf8(a).ok())
+        .filter(|a| a.starts_with('/'))?;
+    let deleted = format!("{program} (deleted)");
+    maps.lines().find_map(|line| {
+        // The path is everything after the fifth field; it may contain spaces.
+        let path = line.splitn(6, char::is_whitespace).nth(5)?.trim_start();
+        (path == program || path == deleted).then(|| PathBuf::from(path))
+    })
+}
+
 pub fn parse_ps(text: &str) -> Vec<(u32, PathBuf)> {
     text.lines()
         .filter_map(|line| {
@@ -256,6 +294,33 @@ pub fn parse_ps(text: &str) -> Vec<(u32, PathBuf)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_emulated_program_is_read_from_its_mappings() {
+        let app = "/home/me/AppImages/my app.appimage";
+        let cmdline = format!("/usr/bin/qemu-x86_64-static\0{app}\0--flag\0");
+        let maps = format!(
+            "555555554000-55555556c000 r--p 00000000 00:2e 1234   {app}\n7fff0000-7fff1000 r-xp 00000000 00:00 0   [vdso]\n"
+        );
+        assert_eq!(
+            emulated_program(cmdline.as_bytes(), &maps),
+            Some(PathBuf::from(app))
+        );
+        let replaced = maps.replacen(app, &format!("{app} (deleted)"), 1);
+        assert_eq!(
+            emulated_program(cmdline.as_bytes(), &replaced),
+            Some(PathBuf::from(format!("{app} (deleted)")))
+        );
+        // A program that only names the file (`sha256sum app`) is not the app.
+        assert!(!is_emulator(Path::new("/usr/bin/sha256sum")));
+        assert!(is_emulator(Path::new("/usr/bin/qemu-x86_64-static")));
+        assert!(is_emulator(Path::new("/usr/bin/qemu-x86_64")));
+        assert!(!is_emulator(Path::new("/usr/bin/qemu-system-x86_64")));
+        assert_eq!(
+            emulated_program(b"/usr/bin/qemu-x86_64\0relative\0", &maps),
+            None
+        );
+    }
 
     /// A launched app keeps writing after its launcher exits. With the old
     /// piped stdio this grandchild was killed by SIGPIPE on its first write.

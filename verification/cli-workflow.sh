@@ -67,7 +67,10 @@ ok "running instance detected (pid $app_pid)"
 run --apply --cmd 'app.update={"apps":["demo_editor"]}' > "$out/update.json" || fail "update failed: $(cat "$out/update.json")"
 grep -q "still running the previous version" "$out/update.json" || fail "update should note the running instance"
 kill -0 "$app_pid" || fail "the running app was stopped by the update"
-[[ "$(readlink /proc/$app_pid/exe)" == *"(deleted)" ]] || fail "running instance should still use the old file"
+old_file=$(readlink /proc/$app_pid/exe)
+# Under qemu-user (an x86_64 fixture on ARM) exe is qemu; the file is in maps.
+[[ ${old_file##*/} == qemu-* ]] && old_file=$(rg -F "$H/AppImages/demo_editor.appimage" /proc/$app_pid/maps | head -1)
+[[ $old_file == *"(deleted)" ]] || fail "running instance should still use the old file"
 v=$(run --cmd 'app.info={"app":"demo_editor"}' | jq_py 'd["results"][0]["data"]["version"], d["results"][0]["data"]["running"]["old_version"]')
 [[ $v == "('1.1', True)" ]] || fail "after update expected 1.1 from the file, old version running: $v"
 grep -q '^X-AppImage-Version=' "$H/.local/share/applications/demo_editor.desktop" && fail "the menu entry should carry no version"
