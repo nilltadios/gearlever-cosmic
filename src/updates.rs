@@ -460,23 +460,79 @@ fn arch_in_name(name: &str) -> Option<&'static str> {
         .map(|(_, arch)| *arch)
 }
 
-/// Several assets match: the one named for `arch` (the installed file's),
-/// else one whose name gives no architecture, else the first. A file for
-/// another architecture is still refused before it replaces anything
-/// (`check_same_arch`).
+/// Of the files matching a pattern, the one named for `arch` (the installed
+/// file's), else one whose name gives no architecture. A file named for
+/// another architecture is never picked; `check_same_arch` also refuses one
+/// before it replaces anything.
 fn pick_for<'a, T>(arch: &str, items: Vec<&'a T>, name: impl Fn(&T) -> &str) -> Option<&'a T> {
-    if items.len() <= 1 {
-        return items.into_iter().next();
-    }
     let named = |want: Option<&str>| {
         items
             .iter()
             .find(|i| arch_in_name(name(i)) == want)
             .copied()
     };
-    named(Some(arch))
-        .or_else(|| named(None))
-        .or(items.first().copied())
+    named(Some(arch)).or_else(|| named(None))
+}
+
+/// `pick_for`, telling "nothing matches" (`Ok(None)`) apart from "files
+/// match, but only for other architectures".
+fn pick_or_other<'a, T>(
+    arch: &str,
+    items: Vec<&'a T>,
+    name: impl Fn(&T) -> &str,
+) -> Result<Option<&'a T>, Lookup> {
+    if items.is_empty() {
+        return Ok(None);
+    }
+    let offered: Vec<String> = items.iter().map(|i| name(i).to_string()).collect();
+    match pick_for(arch, items, &name) {
+        Some(item) => Ok(Some(item)),
+        None => Err(Lookup::OtherArch {
+            arch: arch.to_string(),
+            offered,
+        }),
+    }
+}
+
+/// Why a lookup has nothing to install.
+#[derive(Debug)]
+enum Lookup {
+    /// The check itself failed (network, parsing, a missing file).
+    Failed(String),
+    /// The newest release has files matching the pattern, but only for other
+    /// architectures. Older releases are not searched: their file would be
+    /// compared by size and offered as an "update" to an older version.
+    OtherArch { arch: String, offered: Vec<String> },
+}
+
+impl From<String> for Lookup {
+    fn from(e: String) -> Self {
+        Lookup::Failed(e)
+    }
+}
+
+impl From<&str> for Lookup {
+    fn from(e: &str) -> Self {
+        Lookup::Failed(e.to_string())
+    }
+}
+
+impl Lookup {
+    /// The check result for a lookup that ended here.
+    fn check(self) -> Check {
+        match self {
+            Lookup::Failed(e) => {
+                Check::new(Status::Failed, format!("The update check failed: {e}"))
+            }
+            Lookup::OtherArch { arch, offered } => Check::new(
+                Status::NotFound,
+                format!(
+                    "No {arch} file in the newest release: the files matching the name pattern are for other architectures ({}).",
+                    offered.join(", ")
+                ),
+            ),
+        }
+    }
 }
 
 /// An update must be built for the same architecture as the file it
@@ -636,7 +692,7 @@ fn from_release_list(
     url_key: &str,
     zsync: bool,
     arch: &str,
-) -> Result<Option<Found>, String> {
+) -> Result<Option<Found>, Lookup> {
     for release in releases {
         if release["draft"] == true {
             continue;
@@ -650,7 +706,8 @@ fn from_release_list(
             .copied()
             .filter(|a| glob_match(pattern, a["name"].as_str().unwrap_or_default()))
             .collect();
-        let Some(asset) = pick_for(arch, matching, |a| a["name"].as_str().unwrap_or_default())
+        let Some(asset) =
+            pick_or_other(arch, matching, |a| a["name"].as_str().unwrap_or_default())?
         else {
             continue;
         };
@@ -661,7 +718,7 @@ fn from_release_list(
         let name = asset["name"].as_str().unwrap_or_default();
         if zsync && let Some(target) = name.strip_suffix(".zsync") {
             let Some(file) = assets.iter().find(|a| a["name"] == target) else {
-                return Err(format!("The release has {name} but not {target}"));
+                return Err(format!("The release has {name} but not {target}").into());
             };
             let zsync_text = get_text(asset[url_key].as_str().unwrap_or_default())?;
             let (sha1, _, _) = zsync_header(&zsync_text);
@@ -695,7 +752,7 @@ fn split_repo_url(url: &str) -> Result<(String, String), String> {
     Ok((u.origin().ascii_serialization(), path))
 }
 
-fn find_from_source(source: &Source, arch: &str) -> Result<Option<Found>, String> {
+fn find_from_source(source: &Source, arch: &str) -> Result<Option<Found>, Lookup> {
     match source {
         Source::StaticUrl { url } => Ok(Some(Found {
             download: Download {
@@ -785,7 +842,8 @@ fn find_from_source(source: &Source, arch: &str) -> Result<Option<Found>, String
                         .collect()
                 })
                 .unwrap_or_default();
-            let Some(link) = pick_for(arch, links, |l| l["name"].as_str().unwrap_or_default())
+            let Some(link) =
+                pick_or_other(arch, links, |l| l["name"].as_str().unwrap_or_default())?
             else {
                 return Ok(None);
             };
@@ -807,7 +865,7 @@ fn find_from_source(source: &Source, arch: &str) -> Result<Option<Found>, String
                 zsync_sha1: None,
             }))
         }
-        Source::Ftp { url, filename } => ftp_find(url, filename),
+        Source::Ftp { url, filename } => ftp_find(url, filename, arch),
     }
 }
 
@@ -825,7 +883,7 @@ fn ftp_connect(url: &str) -> Result<suppaftp::FtpStream, String> {
     Ok(ftp)
 }
 
-fn ftp_find(url: &str, pattern: &str) -> Result<Option<Found>, String> {
+fn ftp_find(url: &str, pattern: &str, arch: &str) -> Result<Option<Found>, Lookup> {
     let mut ftp = ftp_connect(url)?;
     let parts: Vec<&str> = pattern.split('/').filter(|p| !p.is_empty()).collect();
     let first_wild = parts.iter().position(|p| p.contains(['*', '?', '[']));
@@ -845,6 +903,26 @@ fn ftp_find(url: &str, pattern: &str) -> Result<Option<Found>, String> {
                 .collect();
             // Newest-looking names last in natural order; take the highest.
             names.sort_by(|a, b| natural_cmp(b, a));
+            if last && !names.is_empty() {
+                // The file for this architecture (or one naming none), not
+                // the highest name: `x86_64` sorts above `aarch64`.
+                let named = |want: Option<&str>| {
+                    names
+                        .iter()
+                        .filter(|n| arch_in_name(n) == want)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                };
+                let mut usable = named(Some(arch));
+                usable.extend(named(None));
+                if usable.is_empty() {
+                    return Err(Lookup::OtherArch {
+                        arch: arch.to_string(),
+                        offered: names,
+                    });
+                }
+                names = usable;
+            }
             for n in names {
                 let full = format!("{}/{n}", dir.trim_end_matches('/'));
                 if last {
@@ -918,7 +996,7 @@ pub fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 /// Turn embedded `.upd_info` into a lookup, the way AppImageUpdate reads it.
-fn find_embedded(info: &str, arch: &str) -> Result<Option<(Found, String)>, String> {
+fn find_embedded(info: &str, arch: &str) -> Result<Option<(Found, String)>, Lookup> {
     let parts: Vec<&str> = info.split('|').collect();
     match parts.as_slice() {
         ["gh-releases-zsync", owner, repo, release, file] => {
@@ -957,7 +1035,7 @@ fn find_embedded(info: &str, arch: &str) -> Result<Option<(Found, String)>, Stri
                 host(url),
             )))
         }
-        _ => Err(format!("Unsupported embedded update information: {info}")),
+        _ => Err(format!("Unsupported embedded update information: {info}").into()),
     }
 }
 
@@ -1018,7 +1096,18 @@ fn self_updater_label(s: &SelfUpdater) -> String {
     }
 }
 
-fn check_self_updater(meta: &Metadata, s: &SelfUpdater) -> Check {
+/// electron-updater's feed for Linux builds of `arch`: `latest-linux.yml`
+/// for x64 and `latest-linux-arm64.yml` for arm64 (its `Provider` adds
+/// `-{arch}` for every arch but x64). None for architectures not mapped here.
+fn electron_feed_name(channel: &str, arch: &str) -> Option<String> {
+    match arch {
+        "x86_64" => Some(format!("{channel}-linux.yml")),
+        "aarch64" => Some(format!("{channel}-linux-arm64.yml")),
+        _ => None,
+    }
+}
+
+fn check_self_updater(meta: &Metadata, s: &SelfUpdater, arch: &str) -> Check {
     let label = self_updater_label(s);
     let mut check = Check::new(
         Status::SelfUpdating,
@@ -1035,14 +1124,20 @@ fn check_self_updater(meta: &Metadata, s: &SelfUpdater) -> Check {
         channel,
     } = s;
     let channel = channel.clone().unwrap_or_else(|| "latest".into());
+    let Some(feed_name) = electron_feed_name(&channel, arch) else {
+        check.message = format!(
+            "This app updates itself through {label}. Its update feed for {arch} builds is not known here, so open the app to check for updates."
+        );
+        return check;
+    };
     let feed = match (provider.as_str(), owner, repo, url) {
         ("github", Some(o), Some(r), _) => {
             check.source_detail = Some(format!("GitHub {o}/{r}"));
-            format!("https://github.com/{o}/{r}/releases/latest/download/{channel}-linux.yml")
+            format!("https://github.com/{o}/{r}/releases/latest/download/{feed_name}")
         }
         ("generic", _, _, Some(u)) => {
             check.source_detail = Some(u.clone());
-            format!("{}/{channel}-linux.yml", u.trim_end_matches('/'))
+            format!("{}/{feed_name}", u.trim_end_matches('/'))
         }
         _ => {
             check.message = format!(
@@ -1062,14 +1157,14 @@ fn check_self_updater(meta: &Metadata, s: &SelfUpdater) -> Check {
     };
     let (version, files) = electron_feed(&text);
     check.available_version = version.clone();
-    let Some((file, sha512, size)) = files
+    let appimages: Vec<_> = files
         .iter()
-        .find(|f| f.0.to_lowercase().ends_with(".appimage"))
-        .cloned()
-    else {
-        check.message =
-            "This app updates itself. Its feed lists no AppImage, so open the app to update it."
-                .into();
+        .filter(|f| f.0.to_lowercase().ends_with(".appimage"))
+        .collect();
+    let Some((file, sha512, size)) = pick_for(arch, appimages, |f| &f.0).cloned() else {
+        check.message = format!(
+            "This app updates itself. Its feed {feed_name} lists no {arch} AppImage, so open the app to update it."
+        );
         return check;
     };
     let sha512 = sha512.as_deref().and_then(b64_to_hex);
@@ -1162,14 +1257,14 @@ pub fn check(meta: &Metadata, source: Option<(&Source, Origin)>) -> Check {
                 c.origin = Some(Origin::Embedded);
                 c
             }
-            Err(e) if e.starts_with("Unsupported") => match &meta.self_updater {
-                Some(s) => return check_self_updater(meta, s),
+            Err(Lookup::Failed(e)) if e.starts_with("Unsupported") => match &meta.self_updater {
+                Some(s) => return check_self_updater(meta, s, arch),
                 None => Check::new(
                     Status::NoSource,
                     format!("{e}. Add an update source to check for updates."),
                 ),
             },
-            Err(e) => {
+            Err(Lookup::Failed(e)) => {
                 let mut c = Check::new(
                     Status::Failed,
                     format!("Checking the embedded update source failed: {e}"),
@@ -1177,9 +1272,15 @@ pub fn check(meta: &Metadata, source: Option<(&Source, Origin)>) -> Check {
                 c.origin = Some(Origin::Embedded);
                 c
             }
+            Err(other) => {
+                let mut c = other.check();
+                c.source = Some("Embedded update information".into());
+                c.origin = Some(Origin::Embedded);
+                c
+            }
         }
     } else if let Some(s) = &meta.self_updater {
-        return check_self_updater(meta, s);
+        return check_self_updater(meta, s, arch);
     } else {
         Check::new(
             Status::NoSource,
@@ -1195,12 +1296,12 @@ pub fn check(meta: &Metadata, source: Option<(&Source, Origin)>) -> Check {
 
 fn run_check(
     meta: &Metadata,
-    found: Result<Option<Found>, String>,
+    found: Result<Option<Found>, Lookup>,
     label: String,
     detail: Option<String>,
 ) -> Check {
     let mut c = match found {
-        Err(e) => Check::new(Status::Failed, format!("The update check failed: {e}")),
+        Err(e) => e.check(),
         Ok(None) => Check::new(
             Status::NotFound,
             "The source has no release file matching the configured name. Check the file name pattern.",
@@ -1466,6 +1567,68 @@ mod tests {
         let ppc = ["App-ppc64le.AppImage", "App.AppImage"];
         assert_eq!(pick("aarch64", &ppc), Some("App.AppImage"));
         assert!(natural_cmp("app-1.10", "app-1.9").is_gt());
+    }
+    #[test]
+    fn no_file_for_this_architecture_is_not_another_architectures_file() {
+        let pick =
+            |arch, names: &[&'static str]| pick_for(arch, names.iter().collect(), |s| s).copied();
+        assert_eq!(pick("aarch64", &["App-2.0-x86_64.AppImage"]), None);
+        assert_eq!(
+            pick("aarch64", &["App-x86_64.AppImage", "App-i386.AppImage"]),
+            None
+        );
+        assert_eq!(pick("aarch64", &["App.AppImage"]), Some("App.AppImage"));
+        let names = ["App-2.0-x86_64.AppImage", "App-2.0-i386.AppImage"];
+        match pick_or_other("aarch64", names.iter().collect(), |s| s) {
+            Err(Lookup::OtherArch { arch, offered }) => {
+                assert_eq!(arch, "aarch64");
+                assert_eq!(offered, names);
+            }
+            other => panic!("{other:?}"),
+        }
+        let none: [&str; 0] = [];
+        assert!(matches!(
+            pick_or_other("aarch64", none.iter().collect(), |s| s),
+            Ok(None)
+        ));
+        // A release whose matching files are all for other architectures
+        // ends the search there; an older release is not offered instead.
+        let releases = vec![
+            serde_json::json!({"tag_name": "v2.0", "assets": [
+                {"name": "App-2.0-x86_64.AppImage", "browser_download_url": "https://h/x86", "size": 3}
+            ]}),
+            serde_json::json!({"tag_name": "v1.0", "assets": [
+                {"name": "App-1.0-aarch64.AppImage", "browser_download_url": "https://h/arm", "size": 2}
+            ]}),
+        ];
+        let r = from_release_list(
+            &releases,
+            "App-*.AppImage",
+            "browser_download_url",
+            false,
+            "aarch64",
+        );
+        let Err(lookup) = r else {
+            panic!("an older release was offered");
+        };
+        let check = lookup.check();
+        assert_eq!(check.status, Status::NotFound);
+        assert_eq!(
+            check.message,
+            "No aarch64 file in the newest release: the files matching the name pattern are for other architectures (App-2.0-x86_64.AppImage)."
+        );
+    }
+    #[test]
+    fn electron_feeds_are_named_for_the_architecture() {
+        assert_eq!(
+            electron_feed_name("latest", "x86_64").as_deref(),
+            Some("latest-linux.yml")
+        );
+        assert_eq!(
+            electron_feed_name("beta", "aarch64").as_deref(),
+            Some("beta-linux-arm64.yml")
+        );
+        assert_eq!(electron_feed_name("latest", "armhf"), None);
     }
     #[test]
     fn repository_urls_keep_their_port() {
