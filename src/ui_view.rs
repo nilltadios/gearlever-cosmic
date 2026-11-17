@@ -146,6 +146,20 @@ impl App {
                     ),
                     Message::Confirm,
                 )),
+                Dialog::Quit(a, procs) => list.push(g(
+                    "dialog.confirm",
+                    format!("Quit {} (SIGTERM to {} processes)", a.name, procs.len()),
+                    Message::Confirm,
+                )),
+                Dialog::ForceQuit(a, procs) => list.push(g(
+                    "dialog.confirm",
+                    format!(
+                        "Force quit {} (SIGKILL to the {} processes still running; unsaved work is lost)",
+                        a.name,
+                        procs.len()
+                    ),
+                    Message::Confirm,
+                )),
                 Dialog::About => {}
             }
             return list;
@@ -177,6 +191,13 @@ impl App {
                 "Dismiss the last result",
                 Message::ClearOutcome,
             ));
+            if let Some(l) = &o.log {
+                list.push(c(
+                    "result.report",
+                    format!("Open the operation report ({})", self.paths.short(l)),
+                    Message::OpenReport(l.clone()),
+                ));
+            }
             if !self.busy() && !gearlever_cosmic::host::sandboxed() {
                 for id in &o.replaced {
                     if let Some(a) = self.app(id)
@@ -449,6 +470,16 @@ impl App {
                 Message::AskRelaunch(id.clone()),
             ));
         }
+        if self.running.contains_key(&id)
+            && !gearlever_cosmic::host::sandboxed()
+            && !self.is_self(a)
+        {
+            list.push(c(
+                "app.quit",
+                format!("Quit {} (asks first)", a.name),
+                Message::AskQuit(id.clone()),
+            ));
+        }
         list.push(c(
             "app.remove",
             format!("Remove {} (asks first)", a.name),
@@ -681,6 +712,8 @@ impl App {
                     "explanation":"The AppImage, its menu entry and its icon move to the Trash."}),
                 Dialog::Confirm(op, plan) => json!({"kind":"confirm","title":op.title(),"plan":plan}),
                 Dialog::Relaunch(a) => json!({"kind":"relaunch","app":{"id":a.id,"name":a.name,"path":a.path}}),
+                Dialog::Quit(a, procs) => json!({"kind":"quit","app":{"id":a.id,"name":a.name,"path":a.path},"processes":procs}),
+                Dialog::ForceQuit(a, procs) => json!({"kind":"force_quit","app":{"id":a.id,"name":a.name,"path":a.path},"processes":procs}),
                 Dialog::About => json!({"kind":"about"}),
             }),
             "operation":operation,

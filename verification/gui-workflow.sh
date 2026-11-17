@@ -7,6 +7,13 @@
 # Usage: verification/gui-workflow.sh [BUILD_DIR]   (default target/debug)
 # Expected: "ok:" lines, renders under the output folder, "PASS", exit 0.
 set -euo pipefail
+# Test windows go to a separate virtual desktop (verification/on-desktop.sh),
+# never onto the desktop in use. GEARLEVER_TEST_HERE=1 opts out.
+if [[ -z ${GEARLEVER_ON_TEST_DESKTOP:-} && -z ${GEARLEVER_TEST_HERE:-} ]]; then
+  here=$(dirname -- "$0")
+  if [[ -n ${GEARLEVER_DESKTOP_BUS:-} ]]; then exec "$here/on-desktop.sh" "$0" "$@"; fi
+  exec "$here/on-desktop.sh" "$here/private-bus.sh" "$0" "$@"
+fi
 cd -- "$(dirname -- "$0")/.."
 bin="$(realpath "${1:-target/debug}")"
 [[ -x $bin/gearlever-cosmic && -x $bin/gearlever-cosmic-cli ]] || cargo build --bins
@@ -160,4 +167,13 @@ ui activate settings.close >/dev/null
 # resizes depend on the compositor). It exits after saving its render.
 "$bin/gearlever-cosmic" --preview app-narrow --capture "$out/7-narrow.png" >/dev/null
 ok "settings and narrow renders saved"
+# Renders from a window that stopped presenting (hidden desktop, screen off)
+# all repeat its first frame; such a run proves the logic, not the layout.
+same=$(sha256sum "$out"/*.png | awk '{print $1}' | sort | uniq -d | wc -l)
+if [[ -n ${GEARLEVER_ON_TEST_DESKTOP:-} ]]; then
+  echo "note: the window ran on a hidden test desktop, so its renders show only its first frame; the checks above are the result (layout needs GEARLEVER_TEST_HERE=1)"
+else
+  [[ $same -eq 0 ]] || fail "$same renders are identical: the window did not redraw (screen off?), so they show nothing; the checks above still passed"
+  ok "every render differs"
+fi
 echo "PASS ($out)"

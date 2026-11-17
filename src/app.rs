@@ -15,6 +15,7 @@ use gearlever_cosmic::{
     library::{self, App as AppItem, Inventory, ManagedBy, Running},
     ops::{self, Conflict, Job, Operation, Report},
     paths::Paths,
+    relaunch,
     requirements::{self, Requirements, Verdict},
     settings::{Settings, Theme},
     updates::{self, Check, MANAGERS, Source, Status},
@@ -86,6 +87,10 @@ pub enum Dialog {
     /// A reviewed operation: title, plan lines, confirm label.
     Confirm(Box<Operation>, Vec<String>),
     Relaunch(Box<AppItem>),
+    /// Quit a running app: the processes that will get SIGTERM.
+    Quit(Box<AppItem>, Vec<relaunch::Proc>),
+    /// A Quit left these processes running; Force Quit sends SIGKILL.
+    ForceQuit(Box<AppItem>, Vec<relaunch::Proc>),
     About,
 }
 
@@ -143,8 +148,14 @@ pub enum Message {
     /// Ask to relaunch a running app (confirmation first).
     AskRelaunch(String),
     Relaunched(Result<String, String>),
+    /// Ask to quit a running app (confirmation first).
+    AskQuit(String),
+    Quitted(Box<AppItem>, Result<relaunch::QuitOutcome, String>),
+    ForceQuitted(Result<String, String>),
     OpenFolder(String),
     OpenWebsite(String),
+    /// Open an operation's JSON report.
+    OpenReport(PathBuf),
     AskRemove(Vec<String>),
     UpdateApp(String),
     UpdateAll,
@@ -257,6 +268,9 @@ pub struct RunningJob {
     pub total: usize,
     /// Apps replaced by the operation that is running now.
     pub replacing: Vec<String>,
+    /// The app an update is running for and its version before, for the
+    /// one-line result ("Demo Editor 1.0 → 1.1").
+    pub updating: Option<(String, String)>,
 }
 
 pub struct App {
@@ -439,6 +453,57 @@ fn row_style(selected: bool) -> cosmic::theme::Button {
         }),
         pressed: Box::new(move |focused, theme| tinted(focused, theme, 0.16)),
     }
+}
+
+/// Remove and Force Quit: the destructive button in a plain red with white
+/// text, whatever red the theme picks for destructive (COSMIC's dark theme
+/// uses a light pink). Shape, focus ring and the disabled look come from the
+/// theme's Destructive style.
+pub fn red_button() -> cosmic::theme::Button {
+    use cosmic::widget::button::Catalog;
+    const RED: [u8; 3] = [0xe0, 0x1b, 0x24];
+    const HOVER: [u8; 3] = [0xc0, 0x1c, 0x28];
+    const PRESSED: [u8; 3] = [0xa5, 0x1d, 0x2d];
+    fn paint(
+        mut style: cosmic::widget::button::Style,
+        rgb: [u8; 3],
+        alpha: f32,
+    ) -> cosmic::widget::button::Style {
+        let color = |c: [u8; 3], a| iced::Color::from_rgba8(c[0], c[1], c[2], a);
+        style.background = Some(color(rgb, alpha).into());
+        style.overlay = None;
+        style.text_color = Some(color([0xff; 3], alpha));
+        style.icon_color = Some(color([0xff; 3], alpha));
+        style
+    }
+    let d = || cosmic::theme::Button::Destructive;
+    cosmic::theme::Button::Custom {
+        active: Box::new(move |focused, theme| paint(theme.active(focused, false, &d()), RED, 1.0)),
+        disabled: Box::new(move |theme| paint(theme.disabled(&d()), RED, 0.5)),
+        hovered: Box::new(move |focused, theme| {
+            paint(theme.hovered(focused, false, &d()), HOVER, 1.0)
+        }),
+        pressed: Box::new(move |focused, theme| {
+            paint(theme.pressed(focused, false, &d()), PRESSED, 1.0)
+        }),
+    }
+}
+
+/// The processes a Quit or Force Quit dialog acts on.
+fn process_list<'a>(procs: &[relaunch::Proc]) -> Element<'a, Message> {
+    let mut col = widget::column::with_capacity(procs.len()).spacing(4);
+    for p in procs {
+        let kind = match p.kind {
+            relaunch::ProcKind::App => "app",
+            relaunch::ProcKind::Helper => "background helper",
+            relaunch::ProcKind::Runtime => "AppImage runtime",
+        };
+        col = col.push(widget::text::caption(format!(
+            "{} · {kind} · {}",
+            p.pid, p.command
+        )));
+    }
+    col.into()
 }
 
 fn pill<'a>(text: String) -> Element<'a, Message> {
@@ -706,6 +771,7 @@ impl App {
             queue: ops,
             done: 0,
             total,
+            updating: None,
             replacing: vec![],
         });
         self.next_op()
@@ -726,6 +792,10 @@ impl App {
                 replace: Some(app), ..
             } => vec![app.id.clone()],
             _ => vec![],
+        };
+        running.updating = match &op {
+            Operation::Update { app, .. } => Some((app.name.clone(), app.display_version())),
+            _ => None,
         };
         let job = running.job.clone();
         let (paths, settings) = (self.paths.clone(), self.settings.clone());
@@ -1299,6 +1369,7 @@ impl App {
                     )
                     .push(
                         widget::button::destructive("Remove")
+                            .class(red_button())
                             .id(widget::Id::new("app.remove"))
                             .on_press_maybe(
                                 (!busy).then(|| Message::AskRemove(vec![a.id.clone()])),
@@ -1324,11 +1395,23 @@ impl App {
                 } else {
                     format!("{} is running. Updates still install now; they take effect the next time it starts.", a.name)
                 },
-                (r.old_version && !gearlever_cosmic::host::sandboxed()).then(|| {
-                    widget::button::suggested("Relaunch")
-                        .id(widget::Id::new("app.relaunch"))
-                        .on_press_maybe((!busy).then(|| Message::AskRelaunch(a.id.clone())))
-                        .into()
+                (!gearlever_cosmic::host::sandboxed()).then(|| {
+                    let mut actions = widget::row::with_capacity(2).spacing(10);
+                    if r.old_version {
+                        actions = actions.push(
+                            widget::button::suggested("Relaunch")
+                                .id(widget::Id::new("app.relaunch"))
+                                .on_press_maybe((!busy).then(|| Message::AskRelaunch(a.id.clone()))),
+                        );
+                    }
+                    if !self.is_self(a) {
+                        actions = actions.push(
+                            widget::button::standard("Quit")
+                                .id(widget::Id::new("app.quit"))
+                                .on_press_maybe((!busy).then(|| Message::AskQuit(a.id.clone()))),
+                        );
+                    }
+                    actions.into()
                 }),
             ));
         }
@@ -1648,8 +1731,12 @@ impl App {
                 .spacing(10)
                 .align_y(Alignment::Center)
                 .push(
-                    widget::column::with_capacity(2).width(Length::Fill).push(widget::text::title3(if self.checking_all {
+                    widget::column::with_capacity(2).width(Length::Fill).push(widget::text::title3(if self.job.as_ref().is_some_and(|j| j.title.starts_with("Update ")) {
+                        "Installing updates…".to_string()
+                    } else if self.checking_all {
                         "Checking for updates…".to_string()
+                    } else if installable.is_empty() && self.outcome.as_ref().is_some_and(|o| o.ok && !o.replaced.is_empty()) {
+                        "Updates installed".to_string()
                     } else if !self.checked_all_once {
                         "Not checked yet".to_string()
                     } else if installable.is_empty() {
@@ -1657,10 +1744,10 @@ impl App {
                     } else {
                         format!("{} updates ready", installable.len())
                     }))
-                    .push(widget::text::caption("Running apps are updated in place; they switch to the new version the next time they start.")),
+                    .push_maybe((!installable.is_empty()).then(|| widget::text::caption("Running apps are updated in place; they switch to the new version the next time they start."))),
                 )
                 .push(widget::button::standard("Check for Updates").id(widget::Id::new("updates.check")).on_press_maybe((!self.checking_all).then_some(Message::CheckAll)))
-                .push(widget::button::suggested(format!("Update All ({})", installable.len())).id(widget::Id::new("updates.all")).on_press_maybe((!busy && !installable.is_empty()).then_some(Message::UpdateAll))),
+                .push_maybe((!installable.is_empty()).then(|| widget::button::suggested(format!("Update All ({})", installable.len())).id(widget::Id::new("updates.all")).on_press_maybe((!busy).then_some(Message::UpdateAll)))),
         );
         type Group = (&'static str, &'static str, fn(&Check) -> bool);
         let groups: [Group; 6] = [
@@ -1687,11 +1774,7 @@ impl App {
                 "Nothing is known about these updates until a check succeeds.",
                 |c| c.status == Status::Failed || c.status == Status::NotFound,
             ),
-            (
-                "No update source",
-                "Add a source on the app's page to check these apps.",
-                |c| c.status == Status::NoSource,
-            ),
+            ("No update source", "", |c| c.status == Status::NoSource),
             ("Up to date", "Compared with their sources.", |c| {
                 c.status == Status::UpToDate
             }),
@@ -1725,7 +1808,14 @@ impl App {
                                     _ => String::new(),
                                 }
                             )))
-                            .push(wrap(c.message.clone()).size(12)),
+                            .push(
+                                wrap(if c.status == Status::NoSource {
+                                    "No update source · add one on its page".to_string()
+                                } else {
+                                    c.message.clone()
+                                })
+                                .size(12),
+                            ),
                     );
                 if c.status == Status::Available && c.can_install {
                     row = row.push(
@@ -1753,7 +1843,9 @@ impl App {
                     widget::column::with_capacity(2)
                         .spacing(6)
                         .push(widget::text::heading(title))
-                        .push(widget::text::caption(description)),
+                        .push_maybe(
+                            (!description.is_empty()).then(|| widget::text::caption(description)),
+                        ),
                 )
                 .push(list);
         }
@@ -1973,9 +2065,17 @@ impl App {
             .lock()
             .map(|p| p.clone())
             .unwrap_or_default();
+        // The bar spans the whole banner (libcosmic's default is a short
+        // fixed width).
         let bar: Element<'_, Message> = match p.fraction {
-            Some(f) => widget::progress_bar::determinate_linear(f).into(),
-            None => widget::progress_bar::indeterminate_linear().into(),
+            Some(f) => widget::progress_bar::determinate_linear(f)
+                .width(Length::Fill)
+                .girth(6.0)
+                .into(),
+            None => widget::progress_bar::indeterminate_linear()
+                .width(Length::Fill)
+                .girth(6.0)
+                .into(),
         };
         panel(
             widget::column::with_capacity(3)
@@ -2013,7 +2113,9 @@ impl App {
         let mut col = widget::column::with_capacity(6)
             .spacing(6)
             .width(Length::Fill)
-            .push(widget::text::heading(if o.ok {
+            .push(widget::text::heading(if o.ok && !o.lines.is_empty() {
+                o.title.replacen("Update ", "Updated ", 1)
+            } else if o.ok {
                 format!("{}: done", o.title)
             } else if !o.lines.is_empty() {
                 format!("{}: {} of {} failed", o.title, o.failed, o.lines.len())
@@ -2049,10 +2151,11 @@ impl App {
             }
         }
         if let Some(l) = &o.log {
-            col = col.push(widget::text::caption(format!(
-                "Report: {}",
-                self.paths.short(l)
-            )));
+            col = col.push(
+                widget::button::text("Open Report")
+                    .id(widget::Id::new("result.report"))
+                    .on_press(Message::OpenReport(l.clone())),
+            );
         }
         panel(
             widget::row::with_capacity(2).spacing(12).push(col).push(
@@ -2544,7 +2647,7 @@ impl cosmic::Application for App {
                     .title(title)
                     .body(body)
                     .secondary_action(cancel())
-                    .primary_action(widget::button::destructive("Remove").id(widget::Id::new("dialog.confirm")).on_press(Message::Confirm))
+                    .primary_action(widget::button::destructive("Remove").class(red_button()).id(widget::Id::new("dialog.confirm")).on_press(Message::Confirm))
                     .into()
             }
             Dialog::Confirm(op, plan) => {
@@ -2568,6 +2671,20 @@ impl cosmic::Application for App {
                 })
                 .secondary_action(cancel())
                 .primary_action(widget::button::suggested("Relaunch").id(widget::Id::new("dialog.confirm")).on_press(Message::Confirm))
+                .into(),
+            Dialog::Quit(a, procs) => widget::dialog()
+                .title(format!("Quit {}?", a.name))
+                .body(format!("{} is asked to quit, as when you log out. If it asks to save your work, answer it in its window. Anything still running after {} seconds can then be force quit.", a.name, relaunch::QUIT_WAIT.as_secs()))
+                .control(process_list(procs))
+                .secondary_action(cancel())
+                .primary_action(widget::button::suggested("Quit").id(widget::Id::new("dialog.confirm")).on_press(Message::Confirm))
+                .into(),
+            Dialog::ForceQuit(a, procs) => widget::dialog()
+                .title(format!("{} Did Not Quit", a.name))
+                .body(format!("These processes are still running. Force Quit stops them at once, without letting {} save anything: unsaved work in them is lost.", a.name))
+                .control(process_list(procs))
+                .secondary_action(widget::button::standard("Keep Running").id(widget::Id::new("dialog.cancel")).on_press(Message::CloseDialog))
+                .primary_action(widget::button::destructive("Force Quit").class(red_button()).id(widget::Id::new("dialog.confirm")).on_press(Message::Confirm))
                 .into(),
             Dialog::About => widget::dialog()
                 .title("Gear Lever COSMIC")
@@ -2735,6 +2852,42 @@ impl cosmic::Application for App {
                     self.dialog = Some(Dialog::Relaunch(Box::new(a)));
                 }
             }
+            Message::AskQuit(id) => {
+                if let Some(a) = self.app(&id).cloned() {
+                    match relaunch::quit_targets(&a.path) {
+                        Ok(procs) if procs.is_empty() => {
+                            self.notice = Some(format!("{} is not running", a.name));
+                            return self.refresh();
+                        }
+                        Ok(procs) => self.dialog = Some(Dialog::Quit(Box::new(a), procs)),
+                        Err(e) => self.notice = Some(e),
+                    }
+                }
+            }
+            Message::Quitted(a, r) => {
+                let t = match r {
+                    Ok(relaunch::QuitOutcome::Done(text)) => self.toast(text),
+                    Ok(relaunch::QuitOutcome::Left(procs)) => {
+                        self.dialog = Some(Dialog::ForceQuit(a, procs));
+                        Task::none()
+                    }
+                    Err(e) => {
+                        self.notice = Some(e);
+                        Task::none()
+                    }
+                };
+                return Task::batch([t, self.refresh()]);
+            }
+            Message::ForceQuitted(r) => {
+                let t = match r {
+                    Ok(text) => self.toast(text),
+                    Err(e) => {
+                        self.notice = Some(e);
+                        Task::none()
+                    }
+                };
+                return Task::batch([t, self.refresh()]);
+            }
             Message::Relaunched(r) => {
                 let t = match r {
                     Ok(text) => self.toast(text),
@@ -2759,6 +2912,11 @@ impl cosmic::Application for App {
                     self.notice = Some(e);
                 }
             }
+            Message::OpenReport(path) => {
+                if let Err(e) = gearlever_cosmic::host::open(&path.to_string_lossy()) {
+                    self.notice = Some(e);
+                }
+            }
             Message::OpenWebsite(url) => {
                 if let Err(e) = gearlever_cosmic::host::open(&url) {
                     self.notice = Some(e);
@@ -2775,6 +2933,20 @@ impl cosmic::Application for App {
                 Some(Dialog::Remove(apps)) => return self.run_ops(vec![Operation::Remove(apps)]),
                 Some(Dialog::Confirm(op, _)) => return self.run_ops(vec![*op]),
                 Some(Dialog::Relaunch(a)) => return self.relaunch(*a),
+                Some(Dialog::Quit(a, _)) => {
+                    let t = self.toast(format!("Asking {} to quit…", a.name));
+                    let app = (*a).clone();
+                    return Task::batch([
+                        t,
+                        background(
+                            move || relaunch::quit(&app, relaunch::QUIT_WAIT),
+                            move |r| Message::Quitted(a.clone(), r),
+                        ),
+                    ]);
+                }
+                Some(Dialog::ForceQuit(a, _)) => {
+                    return background(move || relaunch::force_quit(&a), Message::ForceQuitted);
+                }
                 _ => {}
             },
             Message::CloseDialog => self.dialog = None,
@@ -2965,6 +3137,7 @@ impl cosmic::Application for App {
                     .map(|j| j.replacing.clone())
                     .unwrap_or_default();
                 let batch = self.job.as_ref().and_then(|j| j.batch.clone());
+                let updating = self.job.as_ref().and_then(|j| j.updating.clone());
                 let stop;
                 let outcome = match *result {
                     Ok(r) => {
@@ -2989,10 +3162,19 @@ impl cosmic::Application for App {
                         if let Some(b) = &batch {
                             o.title = b.clone();
                             o.lines.push(if ok {
-                                r.steps
+                                let step = r
+                                    .steps
                                     .last()
                                     .cloned()
-                                    .unwrap_or_else(|| format!("{title}: done"))
+                                    .unwrap_or_else(|| format!("{title}: done"));
+                                // "Updated Demo Editor to 1.1" -> "Demo Editor 1.0 → 1.1"
+                                match &updating {
+                                    Some((name, from)) => step
+                                        .strip_prefix(&format!("Updated {name} to "))
+                                        .map(|to| format!("{name} {from} → {to}"))
+                                        .unwrap_or(step),
+                                    None => step,
+                                }
                             } else {
                                 o.failed += 1;
                                 format!("{title}: failed. {}", r.errors.join(" "))
@@ -3002,11 +3184,14 @@ impl cosmic::Application for App {
                             o.replaced.extend(replacing);
                         }
                         o.steps.extend(r.steps);
-                        o.notes.extend(
-                            r.notes
-                                .into_iter()
-                                .filter(|n| !n.starts_with("Previous menu entry saved")),
-                        );
+                        // Each note once: a batch repeats "The replaced version is
+                        // in the Trash" for every app.
+                        for n in r.notes {
+                            if !n.starts_with("Previous menu entry saved") && !o.notes.contains(&n)
+                            {
+                                o.notes.push(n);
+                            }
+                        }
                         o.errors.extend(r.errors);
                         o.log = Some(r.log);
                         o
@@ -3048,7 +3233,8 @@ impl cosmic::Application for App {
                     }
                 }
                 let next = self.next_op();
-                return if ok {
+                // A batch reports in its result banner, not one toast per app.
+                return if ok && batch.is_none() {
                     Task::batch([next, self.toast(summary)])
                 } else {
                     next

@@ -6,6 +6,8 @@
 # Usage: verification/private-bus.sh COMMAND [ARGS...]   Exit status: COMMAND's.
 set -uo pipefail
 addr_file=$(mktemp)
+# The desktop's own bus, for verification/on-desktop.sh (KWin lives there).
+export GEARLEVER_DESKTOP_BUS=${GEARLEVER_DESKTOP_BUS:-${DBUS_SESSION_BUS_ADDRESS:-}}
 dbus-run-session -- bash -c 'printf %s "$DBUS_SESSION_BUS_ADDRESS" > "$0"; exec "$@"' "$addr_file" "$@"
 rc=$?
 addr=$(cat "$addr_file"); rm -f "$addr_file"

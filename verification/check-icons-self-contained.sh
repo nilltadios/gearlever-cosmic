@@ -6,6 +6,13 @@
 # Usage: verification/check-icons-self-contained.sh [BUILD_DIR]   (default target/debug)
 # Expected: "PASS", exit 0. Run it as verification/private-bus.sh verification/check-icons-self-contained.sh
 set -euo pipefail
+# Test windows go to a separate virtual desktop (verification/on-desktop.sh),
+# never onto the desktop in use. GEARLEVER_TEST_HERE=1 opts out.
+if [[ -z ${GEARLEVER_ON_TEST_DESKTOP:-} && -z ${GEARLEVER_TEST_HERE:-} ]]; then
+  here=$(dirname -- "$0")
+  if [[ -n ${GEARLEVER_DESKTOP_BUS:-} ]]; then exec "$here/on-desktop.sh" "$0" "$@"; fi
+  exec "$here/on-desktop.sh" "$here/private-bus.sh" "$0" "$@"
+fi
 cd -- "$(dirname -- "$0")/.."
 bin="$(realpath "${1:-target/debug}")"
 out="$PWD/verification/out-icons-$(date +%Y%m%d-%H%M%S)"

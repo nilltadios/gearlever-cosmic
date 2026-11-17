@@ -19,7 +19,8 @@ pub const HOST_PROGRAMS: [&str; 7] = [
     "ps",
     "update-desktop-database",
     "notify-send",
-    // Only SIGTERM to an app's own processes, for Relaunch (see relaunch.rs).
+    // Signals to an app's own processes only (see relaunch.rs): SIGTERM for
+    // Relaunch and Quit, SIGKILL only for a confirmed Force Quit.
     "kill",
 ];
 
