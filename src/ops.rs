@@ -186,7 +186,11 @@ impl Operation {
                 } else {
                     let target = target_path(paths, settings, &meta, *conflict)?;
                     let move_it = settings.move_on_integrate && file.parent() != target.parent();
-                    out.push(format!("{} {} to {}", if move_it { "Move" } else { "Copy" }, short(file), short(&target)));
+                    if same_path(file, &target) {
+                        out.push(format!("Keep {} where it is", short(file)));
+                    } else {
+                        out.push(format!("{} {} to {}", if move_it { "Move" } else { "Copy" }, short(file), short(&target)));
+                    }
                     out.push(format!("Write the menu entry {}", short(&desktop_path(paths, &target))));
                     if meta.icon.is_some() || meta.desktop_entry.is_some() {
                         out.push(format!("Save the app icon in {}", short(&target.parent().unwrap().join(".icons"))));
@@ -433,9 +437,12 @@ fn target_path(
     let base = file_stem(meta.name.as_deref().unwrap_or(&fallback));
     let plain = meta.terminal && settings.terminal_apps_use_executable_name;
     let ext = if plain { "" } else { ".appimage" };
+    // A name is free when nothing is there, or when the file being added is
+    // already there without a menu entry (an app that deleted its own entry):
+    // it is then used where it is instead of copied next to itself.
     let free = |name: &str| {
         let p = folder.join(name);
-        !p.exists() && !desktop_path(paths, &p).exists()
+        !desktop_path(paths, &p).exists() && (!p.exists() || same_path(&p, &meta.path))
     };
     let first = format!("{base}{ext}");
     if free(&first) && conflict != Conflict::KeepBoth {
@@ -454,6 +461,11 @@ fn target_path(
         }
     }
     Err("Cannot find a free file name in the AppImages folder".into())
+}
+
+/// The same file on disk (symlinks and `..` resolved).
+fn same_path(a: &Path, b: &Path) -> bool {
+    a == b || matches!((fs::canonicalize(a), fs::canonicalize(b)), (Ok(x), Ok(y)) if x == y)
 }
 
 /// Write a file atomically: temp file in the same folder, fsync, rename.
@@ -898,23 +910,38 @@ fn run(
                 let folder = target.parent().unwrap();
                 fs::create_dir_all(folder)
                     .map_err(|e| format!("Cannot create {}: {e}", folder.display()))?;
-                job.step(format!("Copying to {}", paths.short(&target)));
-                let staging = folder.join(format!(
-                    ".{}.incoming-{}",
-                    name_of(&target),
-                    crate::now_nanos()
-                ));
-                let moved = settings.move_on_integrate
-                    && file.parent() != Some(folder)
-                    && fs::rename(file, &staging).is_ok();
-                if !moved {
-                    fs::copy(file, &staging)
-                        .map_err(|e| format!("Cannot copy {}: {e}", file.display()))?;
+                let in_place = same_path(file, &target);
+                let mut moved = false;
+                if in_place {
+                    job.step(format!("Using {} where it is", paths.short(&target)));
+                    let mode = fs::metadata(&target)
+                        .map_err(|e| e.to_string())?
+                        .permissions()
+                        .mode();
+                    if mode & 0o777 != 0o755 {
+                        fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
+                            .map_err(|e| e.to_string())?;
+                        report.changed.push(target.clone());
+                    }
+                } else {
+                    job.step(format!("Copying to {}", paths.short(&target)));
+                    let staging = folder.join(format!(
+                        ".{}.incoming-{}",
+                        name_of(&target),
+                        crate::now_nanos()
+                    ));
+                    moved = settings.move_on_integrate
+                        && file.parent() != Some(folder)
+                        && fs::rename(file, &staging).is_ok();
+                    if !moved {
+                        fs::copy(file, &staging)
+                            .map_err(|e| format!("Cannot copy {}: {e}", file.display()))?;
+                    }
+                    fs::set_permissions(&staging, fs::Permissions::from_mode(0o755))
+                        .map_err(|e| e.to_string())?;
+                    fs::rename(&staging, &target).map_err(|e| e.to_string())?;
+                    report.changed.push(target.clone());
                 }
-                fs::set_permissions(&staging, fs::Permissions::from_mode(0o755))
-                    .map_err(|e| e.to_string())?;
-                fs::rename(&staging, &target).map_err(|e| e.to_string())?;
-                report.changed.push(target.clone());
                 let mut meta = meta;
                 meta.path = target.clone();
                 let icon = save_icon(&meta, &target)?;
@@ -1413,6 +1440,44 @@ mod tests {
             crate::library::ManagedBy::GearLeverCosmic
         );
         assert!(report.log.is_file());
+    }
+
+    /// An app that deleted its own menu entry leaves its file at the standard
+    /// name; adding it again writes the entry for that file, without a copy.
+    #[test]
+    fn re_adding_a_file_that_lost_its_menu_entry_keeps_it_in_place() {
+        let (dir, paths, settings) = setup();
+        let folder = dir.path().join("AppImages");
+        fs::create_dir_all(&folder).unwrap();
+        let file = demo(&folder, "demo_app.appimage", "1.0");
+        let op = Operation::Integrate {
+            file: file.clone(),
+            conflict: Conflict::Ask,
+            replace: None,
+            source: None,
+        };
+        let plan = op.plan(&paths, &settings).unwrap();
+        assert_eq!(
+            plan[0], "Keep ~/AppImages/demo_app.appimage where it is",
+            "{plan:?}"
+        );
+        let before = fs::read(&file).unwrap();
+        let report = execute(op, &paths, &settings, &Job::default()).unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(fs::read(&file).unwrap(), before);
+        let names: Vec<_> = fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|n| !n.starts_with('.'))
+            .collect();
+        assert_eq!(names, ["demo_app.appimage"]);
+        let entry = DesktopFile::parse(
+            &fs::read_to_string(paths.applications().join("demo_app.desktop")).unwrap(),
+        );
+        assert_eq!(entry.main("TryExec").unwrap(), file.to_string_lossy());
+        let inv = crate::library::load(&paths, &settings);
+        assert_eq!(inv.apps.len(), 1);
+        assert_eq!(inv.apps[0].path, file);
     }
 
     #[test]
