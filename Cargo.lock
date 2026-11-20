@@ -2054,7 +2054,7 @@ dependencies = [
 
 [[package]]
 name = "gearlever-cosmic"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "backhand",
  "base64 0.23.1",
