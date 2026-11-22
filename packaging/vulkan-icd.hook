@@ -1,0 +1,410 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Gear Lever COSMIC: resolve bare library_path entries in host Vulkan ICD
+# manifests to absolute host paths so sharun's cross-libc-dlopen.so intercepts
+# dlopen() when the host's glibc is newer than the bundled one.
+#
+# Upstream cross-libc-dlopen only intercepts paths starting with '/'. Some
+# distributions (Arch/CachyOS Mesa, NVIDIA's nvidia_icd.json on several
+# distros) ship bare SONAMEs such as "libvulkan_radeon.so" or
+# "libGLX_nvidia.so.0", which bypass the interceptor and fail to load against
+# an older bundled glibc, dropping wgpu to CPU tiny-skia rendering. Drop this
+# hook once cross-libc-dlopen handles bare SONAMEs.
+#
+# Sourced by AppRun.sh under bundled dash with `set -e`, after
+# 50-gearlever-cli.hook (so `AppImage cli ...` and `gearlever-cosmic-cli`
+# never run it). Never overrides a user-supplied VK_DRIVER_FILES /
+# VK_ICD_FILENAMES and never aborts startup on error.
+
+_glc_vk_elf_id() {
+	local _raw
+	_raw=$(od -An -tx1 -N20 "$1" 2>/dev/null) || return 1
+	# shellcheck disable=SC2086
+	set -- $_raw
+	[ "$#" -ge 20 ] || return 1
+	printf '%s%s%s%s%s%s:%s%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "${19}" "${20}"
+}
+
+_glc_vk_strip_slashes() {
+	_glc_clean="$1"
+	while [ "$_glc_clean" != "/" ]; do
+		case "$_glc_clean" in
+			*/) _glc_clean=${_glc_clean%/} ;;
+			*) break ;;
+		esac
+	done
+}
+
+_glc_vk_in_appdir() {
+	[ -n "${APPDIR:-}" ] || return 1
+	case "$1" in
+		"$APPDIR"|"$APPDIR"/*) return 0 ;;
+	esac
+	return 1
+}
+
+_glc_vk_extract_str() {
+	local _line _pat _after
+	_line="$1"
+	_pat="\"$2\""
+	case "$_line" in
+		*"$_pat"*) ;;
+		*) return 1 ;;
+	esac
+	_after=${_line#*"$_pat"}
+	while :; do
+		case "$_after" in
+			' '*|"$_glc_tab"*|"$_glc_cr"*) _after=${_after#?} ;;
+			*) break ;;
+		esac
+	done
+	case "$_after" in
+		:*) _after=${_after#:} ;;
+		*) return 1 ;;
+	esac
+	while :; do
+		case "$_after" in
+			' '*|"$_glc_tab"*|"$_glc_cr"*) _after=${_after#?} ;;
+			*) break ;;
+		esac
+	done
+	case "$_after" in
+		'"'*'"'*)
+			_after=${_after#'"'}
+			_glc_val=${_after%%'"'*}
+			return 0
+			;;
+	esac
+	return 1
+}
+
+_glc_vk_read_icd() {
+	local _line
+	_glc_lib_path=""
+	_glc_lib_arch=""
+	while IFS= read -r _line || [ -n "$_line" ]; do
+		if [ -z "$_glc_lib_path" ] && _glc_vk_extract_str "$_line" library_path; then
+			_glc_lib_path="$_glc_val"
+		fi
+		if [ -z "$_glc_lib_arch" ] && _glc_vk_extract_str "$_line" library_arch; then
+			_glc_lib_arch="$_glc_val"
+		fi
+	done < "$1" 2>/dev/null
+}
+
+_glc_vk_is_bare_64() {
+	case "$_glc_lib_path" in
+		''|*/*|*\\*) return 1 ;;
+	esac
+	[ "$_glc_lib_arch" != "32" ]
+}
+
+_glc_vk_target_elf() {
+	local _bin _arch
+	_glc_elf_id=""
+	_glc_triplet=""
+	for _bin in "${APPDIR:-}/shared/bin/gearlever-cosmic" "${APPDIR:-}/bin/gearlever-cosmic"; do
+		if [ -n "${APPDIR:-}" ] && [ -r "$_bin" ]; then
+			_glc_elf_id=$(_glc_vk_elf_id "$_bin") && break
+		fi
+	done
+	if [ -z "$_glc_elf_id" ]; then
+		_arch=$(uname -m 2>/dev/null) || return 1
+		case "$_arch" in
+			x86_64) _glc_elf_id="7f454c460201:3e00" ;;
+			aarch64) _glc_elf_id="7f454c460201:b700" ;;
+			*) return 1 ;;
+		esac
+	fi
+	case "$_glc_elf_id" in
+		7f454c460201:3e00) _glc_triplet="x86_64-linux-gnu" ;;
+		7f454c460201:b700) _glc_triplet="aarch64-linux-gnu" ;;
+		7f454c4602*) _glc_triplet="" ;;
+		*) return 1 ;;
+	esac
+	return 0
+}
+
+_glc_vk_valid_candidate() {
+	local _cand _id
+	_cand="$1"
+	[ -f "$_cand" ] || return 1
+	_glc_vk_in_appdir "$_cand" && return 1
+	case "$_cand" in
+		*'"'*|*\\*|*:*) return 1 ;;
+	esac
+	_id=$(_glc_vk_elf_id "$_cand") || return 1
+	[ "$_id" = "$_glc_elf_id" ]
+}
+
+_glc_vk_resolve_lib() {
+	local _soname _rest _dir _cand _ldcfg _cands
+	_soname="$1"
+	_glc_resolved=""
+	_rest="$_glc_lib_dirs:"
+	while [ -n "$_rest" ]; do
+		_dir=${_rest%%:*}
+		_rest=${_rest#*:}
+		case "$_dir" in
+			/*) ;;
+			*) continue ;;
+		esac
+		_glc_vk_strip_slashes "$_dir"
+		_dir="$_glc_clean"
+		_glc_vk_in_appdir "$_dir" && continue
+		if [ "$_dir" = "/" ]; then
+			_cand="/$_soname"
+		else
+			_cand="$_dir/$_soname"
+		fi
+		if _glc_vk_valid_candidate "$_cand"; then
+			_glc_resolved="$_cand"
+			return 0
+		fi
+	done
+
+	_ldcfg=$(command -v ldconfig 2>/dev/null || true)
+	if [ -z "$_ldcfg" ] && [ -x /sbin/ldconfig ]; then
+		_ldcfg=/sbin/ldconfig
+	elif [ -z "$_ldcfg" ] && [ -x /usr/sbin/ldconfig ]; then
+		_ldcfg=/usr/sbin/ldconfig
+	fi
+	[ -n "$_ldcfg" ] || return 1
+	command -v awk >/dev/null 2>&1 || return 1
+
+	_cands=$("$_ldcfg" -p 2>/dev/null | awk -v s="$_soname" '
+		$1 == s {
+			i = index($0, " => ")
+			if (i > 0) print substr($0, i + 4)
+		}
+	') || return 1
+	[ -n "$_cands" ] || return 1
+
+	_rest="$_cands$_glc_nl"
+	while [ -n "$_rest" ]; do
+		_cand=${_rest%%"$_glc_nl"*}
+		_rest=${_rest#*"$_glc_nl"}
+		[ -n "$_cand" ] || continue
+		if _glc_vk_valid_candidate "$_cand"; then
+			_glc_resolved="$_cand"
+			return 0
+		fi
+	done
+	return 1
+}
+
+_glc_vk_cache_dir() {
+	local _base _dir
+	_glc_cache=""
+	if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ] && [ -w "$XDG_RUNTIME_DIR" ]; then
+		_base="$XDG_RUNTIME_DIR"
+	elif [ -n "${XDG_CACHE_HOME:-}" ] && [ -d "$XDG_CACHE_HOME" ] && [ -w "$XDG_CACHE_HOME" ]; then
+		_base="$XDG_CACHE_HOME"
+	elif [ -n "${HOME:-}" ] && [ -d "$HOME" ] && [ -w "$HOME" ]; then
+		_base="$HOME/.cache"
+	else
+		return 1
+	fi
+	_glc_vk_strip_slashes "$_base"
+	_dir="$_glc_clean/gearlever-cosmic-vk-icd"
+	case "$_dir" in
+		*:*|*"$_glc_nl"*) return 1 ;;
+	esac
+	mkdir -p "$_dir" 2>/dev/null || return 1
+	[ ! -L "$_dir" ] && [ -d "$_dir" ] && [ -w "$_dir" ] || return 1
+	_glc_cache="$_dir"
+	return 0
+}
+
+_glc_vk_rewrite_json() {
+	local _src _dst _abs _tmp _line _head _rest _mid _after _tail _replaced _pat
+	_src="$1"
+	_dst="$2"
+	_abs="$3"
+	_tmp="$_dst.tmp.$$"
+	_replaced=0
+	_pat='"library_path"'
+	{
+		while IFS= read -r _line || [ -n "$_line" ]; do
+			if [ "$_replaced" = 0 ] && _glc_vk_extract_str "$_line" library_path; then
+				_head=${_line%%"$_pat"*}
+				_rest=${_line#*"$_pat"}
+				_mid=${_rest%%'"'*}
+				_after=${_rest#*'"'}
+				_tail=${_after#*'"'}
+				printf '%s"library_path"%s"%s"%s\n' "$_head" "$_mid" "$_abs" "$_tail"
+				_replaced=1
+			else
+				printf '%s\n' "$_line"
+			fi
+		done < "$_src"
+	} > "$_tmp" 2>/dev/null || { rm -f "$_tmp" 2>/dev/null; return 1; }
+	if [ "$_replaced" = 1 ] && mv -f "$_tmp" "$_dst" 2>/dev/null; then
+		return 0
+	fi
+	rm -f "$_tmp" 2>/dev/null
+	return 1
+}
+
+_glc_vk_add_icd_dir() {
+	local _base _dir
+	_base="$1"
+	case "$_base" in
+		/*) ;;
+		*) return 0 ;;
+	esac
+	_glc_vk_strip_slashes "$_base"
+	if [ "$_glc_clean" = "/" ]; then
+		_dir="/vulkan/icd.d"
+	else
+		_dir="$_glc_clean/vulkan/icd.d"
+	fi
+	[ -d "$_dir" ] || return 0
+	_glc_vk_in_appdir "$_dir" && return 0
+	case "$_glc_nl$_glc_icd_dirs$_glc_nl" in
+		*"$_glc_nl$_dir$_glc_nl"*) return 0 ;;
+	esac
+	_glc_icd_dirs="${_glc_icd_dirs:+$_glc_icd_dirs$_glc_nl}$_dir"
+}
+
+_glc_vk_main() {
+	local _glc_tab _glc_cr _glc_nl _glc_clean _glc_val
+	local _glc_lib_path _glc_lib_arch _glc_elf_id _glc_triplet
+	local _glc_lib_dirs _glc_resolved _glc_cache _glc_icd_dirs
+	local _rest _dir _json _icds _has_bare _rewrote _files _used_names _dup_idx _base _dst_name _dst
+
+	[ -n "${VK_DRIVER_FILES:-}" ] && return 0
+	[ -n "${VK_ICD_FILENAMES:-}" ] && return 0
+	[ "${CROSS_LIBC_DLOPEN:-}" = 0 ] && return 0
+	case "${1:-}" in
+		gearlever-cosmic-cli) return 0 ;;
+	esac
+
+	_glc_tab=$(printf '\t')
+	_glc_cr=$(printf '\r')
+	_glc_nl='
+'
+	_glc_icd_dirs=""
+
+	# Search order matching Khronos Vulkan-Loader on Linux.
+	if [ -n "${XDG_CONFIG_HOME:-}" ]; then
+		_glc_vk_add_icd_dir "$XDG_CONFIG_HOME"
+	elif [ -n "${HOME:-}" ]; then
+		_glc_vk_add_icd_dir "$HOME/.config"
+	fi
+
+	_rest="${XDG_CONFIG_DIRS:-/etc/xdg}:"
+	while [ -n "$_rest" ]; do
+		_dir=${_rest%%:*}
+		_rest=${_rest#*:}
+		_glc_vk_add_icd_dir "$_dir"
+	done
+
+	_glc_vk_add_icd_dir "${_GLC_VK_SYSCONFDIR:-/etc}"
+
+	if [ -n "${XDG_DATA_HOME:-}" ]; then
+		_glc_vk_add_icd_dir "$XDG_DATA_HOME"
+	elif [ -n "${HOME:-}" ]; then
+		_glc_vk_add_icd_dir "$HOME/.local/share"
+	fi
+
+	_rest="${XDG_DATA_DIRS:-/run/opengl-driver/share:/usr/local/share:/usr/share}:"
+	while [ -n "$_rest" ]; do
+		_dir=${_rest%%:*}
+		_rest=${_rest#*:}
+		_glc_vk_add_icd_dir "$_dir"
+	done
+
+	[ -n "$_glc_icd_dirs" ] || return 0
+
+	# Pass 1: discover manifests in order and check whether any needs rewriting.
+	_icds=""
+	_has_bare=0
+	_rest="$_glc_icd_dirs$_glc_nl"
+	while [ -n "$_rest" ]; do
+		_dir=${_rest%%"$_glc_nl"*}
+		_rest=${_rest#*"$_glc_nl"}
+		[ -n "$_dir" ] || continue
+		for _json in "$_dir"/*.json; do
+			[ -f "$_json" ] && [ -r "$_json" ] || continue
+			case "$_json" in
+				*:*|*"$_glc_nl"*) return 0 ;;
+			esac
+			_icds="${_icds:+$_icds$_glc_nl}$_json"
+			if [ "$_has_bare" = 0 ]; then
+				_glc_vk_read_icd "$_json"
+				if _glc_vk_is_bare_64; then
+					_has_bare=1
+				fi
+			fi
+		done
+	done
+
+	[ "$_has_bare" = 1 ] || return 0
+
+	# Pass 2: resolve bare SONAMEs to host paths and write cached manifests.
+	_glc_vk_target_elf || return 0
+	_glc_lib_dirs="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}/run/opengl-driver/lib:/usr/lib64:/lib64"
+	if [ -n "$_glc_triplet" ]; then
+		_glc_lib_dirs="$_glc_lib_dirs:/usr/lib/$_glc_triplet:/lib/$_glc_triplet"
+	fi
+	_glc_lib_dirs="$_glc_lib_dirs:/usr/lib:/lib:/usr/local/lib64:/usr/local/lib"
+
+	_glc_cache=""
+	_rewrote=0
+	_files=""
+	_used_names=""
+	_dup_idx=0
+	_rest="$_icds$_glc_nl"
+	while [ -n "$_rest" ]; do
+		_json=${_rest%%"$_glc_nl"*}
+		_rest=${_rest#*"$_glc_nl"}
+		[ -n "$_json" ] || continue
+		_glc_vk_read_icd "$_json"
+		if _glc_vk_is_bare_64 && _glc_vk_resolve_lib "$_glc_lib_path"; then
+			if [ -z "$_glc_cache" ]; then
+				_glc_vk_cache_dir || return 0
+			fi
+			_base=${_json##*/}
+			_dst_name="$_base"
+			if [ -n "$_used_names" ]; then
+				case "$_glc_nl$_used_names$_glc_nl" in
+					*"$_glc_nl$_dst_name$_glc_nl"*)
+						_dup_idx=$((_dup_idx + 1))
+						_dst_name="${_dup_idx}-${_base}"
+						;;
+				esac
+			fi
+			_used_names="${_used_names:+$_used_names$_glc_nl}$_dst_name"
+			_dst="$_glc_cache/$_dst_name"
+			if _glc_vk_rewrite_json "$_json" "$_dst" "$_glc_resolved"; then
+				_files="${_files:+$_files:}$_dst"
+				_rewrote=1
+			else
+				_files="${_files:+$_files:}$_json"
+			fi
+		else
+			_files="${_files:+$_files:}$_json"
+		fi
+	done
+
+	if [ "$_rewrote" = 1 ] && [ -n "$_files" ]; then
+		export VK_DRIVER_FILES="$_files"
+		export GEARLEVER_COSMIC_HOOK_VK_DRIVER_FILES="$_files"
+	fi
+}
+
+_glc_vk_main "${1:-}" || :
+unset -f \
+	_glc_vk_elf_id \
+	_glc_vk_strip_slashes \
+	_glc_vk_in_appdir \
+	_glc_vk_extract_str \
+	_glc_vk_read_icd \
+	_glc_vk_is_bare_64 \
+	_glc_vk_target_elf \
+	_glc_vk_valid_candidate \
+	_glc_vk_resolve_lib \
+	_glc_vk_cache_dir \
+	_glc_vk_rewrite_json \
+	_glc_vk_add_icd_dir \
+	_glc_vk_main

@@ -30,9 +30,7 @@ pub fn command(program: &str) -> Command {
 
 fn command_for(program: &str, sandbox: bool) -> Command {
     let mut cmd = command_raw(program, sandbox);
-    for var in crate::APPIMAGE_ENV {
-        cmd.env_remove(var);
-    }
+    crate::clear_appimage_env(&mut cmd);
     cmd
 }
 

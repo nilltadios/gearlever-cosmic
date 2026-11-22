@@ -470,9 +470,7 @@ fn start(connection: &zbus::Connection, config_dir: Option<PathBuf>) -> Result<V
                 .with_file_name("gearlever-cosmic"),
         };
         let mut command = std::process::Command::new(program);
-        for var in crate::APPIMAGE_ENV {
-            command.env_remove(var);
-        }
+        crate::clear_appimage_env(&mut command);
         command.env("GEARLEVER_COSMIC_UI_INSTANCE", &instance);
         command.env(
             "GEARLEVER_COSMIC_UI_ISOLATED",

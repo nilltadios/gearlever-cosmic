@@ -104,9 +104,44 @@ fn replace_cli_command(text: &str, command: &str) -> String {
     text.replace("gearlever-cosmic-cli ", &format!("{command} "))
 }
 
+/// Marker set by `packaging/vulkan-icd.hook` to the exact `VK_DRIVER_FILES`
+/// value it synthesized for this AppImage process.
+pub const HOOK_VK_DRIVER_FILES_ENV: &str = "GEARLEVER_COSMIC_HOOK_VK_DRIVER_FILES";
+
 /// Variables an AppImage runtime sets for itself; programs this app starts
 /// must not inherit them.
-pub const APPIMAGE_ENV: [&str; 5] = ["APPIMAGE", "APPDIR", "ARGV0", "ARG0", "OWD"];
+pub const APPIMAGE_ENV: [&str; 6] = [
+    "APPIMAGE",
+    "APPDIR",
+    "ARGV0",
+    "ARG0",
+    "OWD",
+    HOOK_VK_DRIVER_FILES_ENV,
+];
+
+/// Remove AppImage runtime variables from a child command, including a
+/// `VK_DRIVER_FILES` value synthesized by our Vulkan ICD startup hook (while
+/// preserving a user-supplied `VK_DRIVER_FILES`).
+pub fn clear_appimage_env(cmd: &mut std::process::Command) {
+    clear_appimage_env_with(
+        cmd,
+        std::env::var_os("VK_DRIVER_FILES").as_deref(),
+        std::env::var_os(HOOK_VK_DRIVER_FILES_ENV).as_deref(),
+    );
+}
+
+fn clear_appimage_env_with(
+    cmd: &mut std::process::Command,
+    vk_driver_files: Option<&std::ffi::OsStr>,
+    hook_vk_driver_files: Option<&std::ffi::OsStr>,
+) {
+    for var in APPIMAGE_ENV {
+        cmd.env_remove(var);
+    }
+    if hook_vk_driver_files.is_some() && vk_driver_files == hook_vk_driver_files {
+        cmd.env_remove("VK_DRIVER_FILES");
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -148,5 +183,45 @@ mod tests {
             std::env::set_var("APPDIR", "/tmp/.mount_other");
         }
         assert_eq!(super::appimage_self(), None);
+    }
+
+    #[test]
+    fn clear_appimage_env_strips_hook_vk_driver_files_only_when_matching() {
+        use std::ffi::OsStr;
+
+        let removed = |vk: Option<&str>, hook: Option<&str>| -> Vec<String> {
+            let mut cmd = std::process::Command::new("true");
+            super::clear_appimage_env_with(&mut cmd, vk.map(OsStr::new), hook.map(OsStr::new));
+            cmd.get_envs()
+                .filter(|&(_, v)| v.is_none())
+                .map(|(k, _)| k.to_string_lossy().into_owned())
+                .collect()
+        };
+
+        let hook_val = "/run/user/1000/gearlever-cosmic-vk-icd/radeon_icd.json";
+        // Hook-synthesized VK_DRIVER_FILES is removed from child processes.
+        let r = removed(Some(hook_val), Some(hook_val));
+        assert!(r.iter().any(|k| k == "VK_DRIVER_FILES"), "{r:?}");
+        assert!(
+            r.iter().any(|k| k == super::HOOK_VK_DRIVER_FILES_ENV),
+            "{r:?}"
+        );
+        assert!(r.iter().any(|k| k == "APPIMAGE"), "{r:?}");
+
+        // User-supplied VK_DRIVER_FILES (no hook marker) is preserved.
+        let r = removed(Some("/custom/icd.json"), None);
+        assert!(!r.iter().any(|k| k == "VK_DRIVER_FILES"), "{r:?}");
+        assert!(
+            r.iter().any(|k| k == super::HOOK_VK_DRIVER_FILES_ENV),
+            "{r:?}"
+        );
+
+        // User-overridden VK_DRIVER_FILES (differs from hook marker) is preserved.
+        let r = removed(Some("/custom/icd.json"), Some(hook_val));
+        assert!(!r.iter().any(|k| k == "VK_DRIVER_FILES"), "{r:?}");
+
+        // Unset VK_DRIVER_FILES leaves it untouched.
+        let r = removed(None, None);
+        assert!(!r.iter().any(|k| k == "VK_DRIVER_FILES"), "{r:?}");
     }
 }

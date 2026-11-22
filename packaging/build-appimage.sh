@@ -135,6 +135,8 @@ export VERSION="$version"
 # Rendering is wgpu (Vulkan, then OpenGL) with a software fallback. Mesa is
 # not bundled: the host's GPU drivers are loaded through cross-libc-dlopen,
 # which keeps the AppImage small (a bundled Mesa with LLVM was 340 MB).
+# 60-vulkan-icd.hook resolves bare SONAMEs in host Vulkan ICD manifests to
+# absolute paths so cross-libc-dlopen intercepts them on distros like Arch.
 export DEPLOY_VULKAN=0 DEPLOY_OPENGL=0
 # No strace run: it would also pick up the GPU drivers (Mesa + LLVM) the
 # test launch happened to load.
@@ -183,6 +185,7 @@ install -Dm644 resources/$app.png "$APPDIR/share/icons/hicolor/512x512/apps/$app
 install -Dm644 resources/$app.metainfo.xml "$APPDIR/share/metainfo/$app.metainfo.xml"
 cp -r docs llms.txt LICENSE NOTICE "$APPDIR/share/gearlever-cosmic/"
 install -Dm755 packaging/cli.hook "$APPDIR/bin/50-gearlever-cli.hook"
+install -Dm755 packaging/vulkan-icd.hook "$APPDIR/bin/60-vulkan-icd.hook"
 rm -f "$out/$OUTNAME" "$out/$OUTNAME.zsync"
 ( cd "$work" && HOME="$qs_home" XDG_CONFIG_HOME="$qs_home/.config" XDG_DATA_HOME="$qs_home/.local/share" "$qs" --make-appimage )
 # The file name alone, so `sha256sum -c` works next to the download.
