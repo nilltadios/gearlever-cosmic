@@ -2,6 +2,7 @@
 mod app;
 mod ui_bridge;
 mod window_state;
+mod x11_window;
 
 /// The AppImage puts its share/ folder, with the vendored GearLeverCosmic icon
 /// theme, on XDG_DATA_DIRS. A build run from the source tree (cargo run, test

@@ -183,6 +183,7 @@ pub enum Message {
     FilesPicked(Result<Vec<PathBuf>, String>),
     Inspected(PathBuf, Box<Pending>),
     Dropped(String, Vec<u8>),
+    DroppedFiles(Vec<PathBuf>),
     FileTransfer(String),
     DragOver(bool),
     PendingConflict(usize, Conflict),
@@ -205,6 +206,7 @@ pub enum Message {
     Copy(String),
     CloseToast(widget::ToastId),
     Key(iced::keyboard::Key, iced::keyboard::Modifiers),
+    WindowOpened(iced::window::Id),
     WindowChanged(iced::window::Id),
     WindowObserved(u64, iced::window::Mode, bool, iced::Size),
     Captured(iced::window::Screenshot),
@@ -2510,10 +2512,15 @@ impl cosmic::Application for App {
                 _ => None,
             }),
             iced::window::events().filter_map(|(id, event)| match event {
-                iced::window::Event::Opened { .. }
-                | iced::window::Event::Resized(_)
+                iced::window::Event::Opened { .. } => Some(Message::WindowOpened(id)),
+                iced::window::Event::Resized(_)
                 | iced::window::Event::Focused
                 | iced::window::Event::Unfocused => Some(Message::WindowChanged(id)),
+                // X11 delivers XDND file drops through winit window events;
+                // Wayland leaves these unimplemented and uses dnd_destination.
+                iced::window::Event::FileHovered(_) => Some(Message::DragOver(true)),
+                iced::window::Event::FilesHoveredLeft => Some(Message::DragOver(false)),
+                iced::window::Event::FileDropped(files) => Some(Message::DroppedFiles(files)),
                 _ => None,
             }),
             if self.split_drag.is_some() {
@@ -3353,6 +3360,14 @@ impl cosmic::Application for App {
                     }
                 }
             }
+            Message::DroppedFiles(files) => {
+                self.drag_over = false;
+                if files.is_empty() {
+                    self.notice = Some("The dropped item is not a local file.".into());
+                } else {
+                    return self.open_files(files);
+                }
+            }
             Message::FileTransfer(key) => {
                 return cosmic::command::file_transfer_receive(key).map(|r| {
                     cosmic::Action::App(Message::FilesPicked(
@@ -3546,6 +3561,14 @@ impl cosmic::Application for App {
                     (Key::Character("3"), true) => return self.switch(Page::Add),
                     _ => {}
                 }
+            }
+            Message::WindowOpened(id) => {
+                let changed = self.update(Message::WindowChanged(id));
+                let x11 = iced::window::run(id, |window| {
+                    crate::x11_window::apply_icon_and_class(window, Self::APP_ID);
+                })
+                .discard();
+                return Task::batch([x11, changed]);
             }
             Message::WindowChanged(id) => {
                 if self.core.main_window_id() != Some(id) {
