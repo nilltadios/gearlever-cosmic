@@ -14,7 +14,7 @@ gpu = ["gui", "libcosmic/wgpu"]
 
 [dependencies]
 # Same Git source as Warehouse COSMIC; Cargo.lock pins the commit.
-libcosmic = { git = "https://github.com/pop-os/libcosmic", optional = true, default-features = false, features = ["wayland", "tokio", "a11y", "dbus-config", "xdg-portal", "single-instance"] }
+libcosmic = { git = "https://github.com/pop-os/libcosmic", optional = true, default-features = false, features = ["wayland", "x11", "tokio", "a11y", "dbus-config", "xdg-portal", "single-instance"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", optional = true, features = ["time", "sync", "rt-multi-thread"] }

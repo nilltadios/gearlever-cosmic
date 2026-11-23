@@ -141,6 +141,15 @@ export DEPLOY_VULKAN=0 DEPLOY_OPENGL=0
 # No strace run: it would also pick up the GPU drivers (Mesa + LLVM) the
 # test launch happened to load.
 export STRACE_MODE=0
+# Bundle the X11, XCB, xkbcommon-x11 and Wayland client libraries that winit
+# dlopens at runtime. quick-sharun does not enable this automatically when
+# STRACE_MODE=0 and DEPLOY_VULKAN=0/DEPLOY_OPENGL=0 on a libcosmic binary;
+# without it, bundled libxkbcommon.so.0 gets paired with host
+# libxkbcommon-x11.so.0 on X11 and segfaults whenever their versions differ,
+# and bare-SONAME client dlopens can fail on a newer host glibc.
+# cross-libc-dlopen binds host Vulkan drivers to the bundled libxcb /
+# libX11-xcb / libwayland-client copies.
+export DEPLOY_COMMON_LIBS=1
 # No /usr/share guessing: quick-sharun otherwise copies every /usr/share
 # folder whose name appears as a word in the binary, so the result depended
 # on what the build machine had installed (149 MB of ibus dictionaries on a
@@ -178,6 +187,17 @@ rmdir "$APPDIR/share/fonts" 2>/dev/null || true
 if grep -aq "/tmp/[A-Za-z0-9]\{6,\}/lib\b" "$APPDIR/shared/bin/gearlever-cosmic-cli"; then
   echo "A patched binary is still in the AppDir" >&2; exit 1
 fi
+# winit dlopens these client libraries at runtime; libxkbcommon-x11 must match
+# the bundled libxkbcommon.so.0 or X11 sessions segfault on startup.
+for pattern in \
+  'libxkbcommon.so.0*' 'libxkbcommon-x11.so.0*' \
+  'libX11.so.6*' 'libX11-xcb.so.1*' 'libXi.so.6*' \
+  'libxcb.so.1*' 'libxcb-xkb.so.1*' 'libwayland-client.so.0*'; do
+  if ! compgen -G "$APPDIR/lib/$pattern" >/dev/null; then
+    echo "Missing $pattern in $APPDIR/lib: install the X11 and Wayland client runtime libraries on the build host" >&2
+    exit 1
+  fi
+done
 # App data: the private fallback icon theme, AppStream data, docs.
 mkdir -p "$APPDIR/share/icons" "$APPDIR/share/metainfo" "$APPDIR/share/gearlever-cosmic"
 cp -r resources/icons/GearLeverCosmic "$APPDIR/share/icons/"

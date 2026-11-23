@@ -4,7 +4,10 @@
 FROM docker.io/library/ubuntu:26.04
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates curl wget git build-essential pkg-config libxkbcommon-dev libwayland-dev \
-      libvulkan1 mesa-vulkan-drivers libegl1 libgl1 libgles2 libwayland-egl1 libxkbcommon0 \
+      libvulkan1 mesa-vulkan-drivers libegl1 libgl1 libgles2 \
+      libwayland-client0 libwayland-cursor0 libwayland-egl1 \
+      libxkbcommon0 libxkbcommon-x11-0 libx11-6 libx11-xcb1 libxi6 libxcursor1 \
+      libxext6 libxfixes3 libxrandr2 libxinerama1 libxcb1 libxcb-xkb1 \
       patchelf strace file binutils xz-utils zstd python3 desktop-file-utils \
     && rm -rf /var/lib/apt/lists/*
 ARG RUST=1.100.0
